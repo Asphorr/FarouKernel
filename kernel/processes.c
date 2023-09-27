@@ -116,4 +116,32 @@ void terminate_process(int pid) {
         process = process->next;
     }
 
-    // If the process was found,
+        // If the process was found, terminate it
+    if (process != NULL) {
+        // Set the process's state to stopped
+        process->state.stopped = true;
+
+        // Free the process structure
+        free(process);
+    } else {
+        // If the process was not found, return an error
+        return -1;
+    }
+}
+
+// The main function
+int main() {
+    // Initialize the process manager
+    init_process_manager();
+
+    // Create a new process
+    int pid = create_process("My Process", my_entry_point);
+
+    // Wait for the process to finish
+    wait_for_process(pid);
+
+    // Terminate the process
+    terminate_process(pid);
+
+    return 0;
+}
