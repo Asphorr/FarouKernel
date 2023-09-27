@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set the project name
-PROJECT_NAME="my_project"
+PROJECT_NAME="funicod"
 
 # Set the target architecture
 TARGET_ARCHITECTURE="x86_64"
