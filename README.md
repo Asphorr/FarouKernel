@@ -1,0 +1,2 @@
+# funicod
+just an attempt
