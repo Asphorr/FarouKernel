@@ -1,0 +1,72 @@
+# Kernel Panic File
+
+KERNEL PANIC:
+================
+
+PID: 12345
+TASK: my_process
+
+STACK TRACE:
+--------------
+
+0xdeadbeef - kernel_function
+0x00000001 - user_function
+
+REGISTERS:
+-----------
+
+RAX: 0x12345678
+RBX: 0x23456789
+RCX: 0x3456789a
+RDX: 0x456789ab
+RSP: 0x56789abc
+RBP: 0x6789defg
+RIP: 0x789defgh
+
+MEMORY STATE:
+----------------
+
+Memory allocation:
+
+* Total memory: 1048576 bytes
+* Used memory: 524288 bytes
+* Free memory: 524288 bytes
+
+Open files:
+
+* /dev/null (fd 0)
+* /dev/tty (fd 1)
+* /dev/random (fd 2)
+
+System call stack trace:
+
+* sys_read(fd=3, buf=0x7ffd40e40000, count=1024)
+* sys_write(fd=1, buf=0x7ffd40e40000, count=1024)
+* sys_open(path="/etc/passwd", flags=O_RDONLY)
+
+Last system call:
+
+* sys_open(path="/etc/passwd", flags=O_RDONLY)
+
+Hardware state:
+
+* CPU: Intel Core i7-1234
+* Motherboard: ASUS P5Q-E
+* Memory: 16 GB DDR3
+* Storage: 500 GB SSD
+
+Operating System:
+
+* Kernel version: 5.12.1
+* Kernel release: 1234567890
+* Kernel build time: 2023-02-17 15:30:00
+
+User space programs:
+
+* /bin/bash
+* /usr/bin/python3
+* /usr/bin/firefox
+
+This is just an example, but a real kernel panic file would contain more detailed information about the hardware, software, and memory state of the system at the time of the panic. The exact format and content of the file can vary depending on the kernel version and configuration.
+
+To create a kernel panic file, you can use a tool such as `kgdb` or `lsof` to capture the necessary information. You can also customize the kernel configuration to include additional information in the panic file. For example, you can add the following line to the kernel command line options to include the Lorem Ipsum text in the panic file:
