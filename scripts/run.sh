@@ -16,10 +16,10 @@ CXX=g++
 LD=ld
 
 # Set the flags for the C compiler
-CFLAGS="-Wall -O2 -std=c99"
+CFLAGS="-Wall -O3 -flto -mtune=$TARGET_ARCHITECTURE -march=$TARGET_ARCHITECTURE"
 
 # Set the flags for the C++ compiler
-CXXFLAGS="-Wall -O2 -std=c++11"
+CXXFLAGS="$CFLAGS -std=c++17"
 
 # Set the libraries to link against
 LIBS="-lpthread -lrt -lm"
@@ -58,6 +58,9 @@ echo "Running benchmark..."
 
 # Wait for the user to press Enter again
 read -p "Press Enter to continue... "
+
+# Clean up
+rm -f ${OBJECTS[*]} $PROJECT_NAME
 
 # Clean up
 rm -f ${OBJECTS[*]} $PROJECT_NAME
