@@ -2,41 +2,51 @@
 #include <memory>
 #include <stdexcept>
 
-class Driver {
-public:
-    explicit Driver(const std::string& name): name_(name), status_(DriverStatus::UNLOADED) {}
+// Define the driver interface
+struct IDriver {
+    virtual ~IDriver() = default;
+    virtual void load() = 0;
+    virtual void unload() = 0;
+};
 
-    void load() {
-        if (status_ != DriverStatus::UNLOADED) {
-            throw std::runtime_error("Cannot load driver: already loaded");
-        }
+// Implement the driver for your device
+class MyDevice : public IDriver {
+public:
+    MyDevice(const std::string& name) : name_(name) {}
+
+    void load() override {
         // Perform any necessary initialization steps here
         // ...
-        status_ = DriverStatus::LOADED;
     }
 
-    void unload() {
-        if (status_ != DriverStatus::LOADED) {
-            throw std::runtime_error("Cannot unload driver: not loaded");
-        }
+    void unload() override {
         // Perform any necessary cleanup steps here
         // ...
-        status_ = DriverStatus::UNLOADED;
     }
 
 private:
     const std::string name_;
-    DriverStatus status_;
 };
 
-enum class DriverStatus { UNLOADED, LOADED };
+// Create a factory method to create instances of the driver
+template<typename T>
+std::unique_ptr<T> make_driver(const std::string& name) {
+    return std::make_unique<MyDevice>(name);
+}
 
 int main() {
     try {
-        Driver driver("mydevice");
-        driver.load();
+        // Create an instance of the driver
+        auto driver = make_driver<IDriver>("mydevice");
+
+        // Load the driver
+        driver->load();
+
         // Do something with the driver
-        driver.unload();
+        // ...
+
+        // Unload the driver
+        driver->unload();
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';
         return EXIT_FAILURE;
