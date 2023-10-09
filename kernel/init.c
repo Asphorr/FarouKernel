@@ -7,57 +7,52 @@
 
 #define MAX_ARGS 64
 
+static void parse_command_line(char ***args, int *argc, int max_args);
+static void setup_program_environment(void);
+static void start_program(int argc, char **args);
+static void wait_for_program_to_finish(void);
+static void cleanup_and_exit(void);
+
 int main(void) {
-    // Parse command line arguments
-    char **args = malloc(sizeof(char *) * MAX_ARGS);
-    int argc = parse_command_line(args, MAX_ARGS);
+    char **args = calloc(MAX_ARGS, sizeof(*args));
+    int argc = 0;
 
-    // Initialize the system call table
-    initialize_syscall_table();
-
-    // Set up the program environment
+    parse_command_line(&args, &argc, MAX_ARGS);
     setup_program_environment();
-
-    // Start the program
     start_program(argc, args);
-
-    // Wait for the program to finish
     wait_for_program_to_finish();
-
-    // Clean up and exit
     cleanup_and_exit();
 
-    return 0;
+    free(args);
+    return EXIT_SUCCESS;
 }
 
-int parse_command_line(char **args, int max_args) {
-    // Parse the command line arguments
-    int argc = 0;
-    char *argv[max_args];
+static void parse_command_line(char ***args, int *argc, int max_args) {
+    char *token = NULL;
+    int i = 0;
 
-    while ((argc < max_args) && (*++argv = strtok(NULL, " \t")) != NULL) {
-        args[argc++] = argv[0];
+    while (i < max_args && token != NULL) {
+        token = strtok(NULL, " \t");
+        if (token != NULL) {
+            (*args)[i++] = token;
+        }
     }
 
-    return argc;
+    *argc = i;
 }
 
-void setup_program_environment() {
-    // Set up the program environment
-    // ...
+static void setup_program_environment(void) {
+    /* set up the program environment */
 }
 
-void start_program(int argc, char **args) {
-    // Start the program
-    // ...
+static void start_program(int argc, char **args) {
+    /* start the program */
 }
 
-void wait_for_program_to_finish() {
-    // Wait for the program to finish
-    // ...
+static void wait_for_program_to_finish(void) {
+    /* wait for the program to finish */
 }
 
-void cleanup_and_exit() {
-    // Clean up and exit
-    // ...
+static void cleanup_and_exit(void) {
+    /* clean up and exit */
 }
