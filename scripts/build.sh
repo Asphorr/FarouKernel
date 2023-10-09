@@ -16,22 +16,22 @@ CXX=g++
 LD=ld
 
 # Set the flags for the C compiler
-CFLAGS=-Wall -O2 -std=c99
+CFLAGS="-Wall -O3 -march=$TARGET_ARCHITECTURE -mtune=$TARGET_ARCHITECTURE -pipe"
 
 # Set the flags for the C++ compiler
-CXXFLAGS=-Wall -O2 -std=c++11
+CXXFLAGS="$CFLAGS -std=c++17"
 
 # Set the libraries to link against
-LIBS=-lpthread -lrt -lm
+LIBS="-lpthread -lrt -lm"
 
 # Set the source files
-SOURCES=main.c utils.c
+SOURCES=(main.c utils.c)
 
 # Set the object files
-OBJECTS=$(SOURCES:%.c=%.o)
+OBJECTS=(${SOURCES[@]/%/.o})
 
 # Build the objects
-$CC $CFLAGS $SOURCES -o $OBJECTS
+$CC $CFLAGS ${SOURCES[*]} -o ${OBJECTS[*]}
 
 # Build the executables
 $CXX $CXXFLAGS main.cpp utils.cpp -o $PROJECT_NAME
