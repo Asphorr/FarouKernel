@@ -1,112 +1,147 @@
-#include <iostream>
-#include <string>
-#include <vector>
+#include <cstdio>
+#include <functional>
 #include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
 #include <utility>
-#include <type_traits>
-#include <concepts>
+#include <variant>
 
-// Define a concept for system calls
-template <typename T>
-concept bool IsSystemCall = requires(T t) {
-    { t.number } -> std::same_as<int>;
-    { t.function } -> std::is_pointer_v<decltype(t)>;
-};
+using namespace std::literals;
 
-// Define an interface for system call implementations
-struct SystemCall {
+class SystemCall {
+public:
     virtual ~SystemCall() = default;
-    virtual int operator()(IsSystemCall auto sc) = 0;
+    virtual void Execute() = 0;
 };
 
-// Implementations of specific system calls
-struct Exit : public SystemCall {
-    explicit Exit(int status) : _status{status} {}
-    int operator()(IsSystemCall auto sc) override { return _status; }
- private:
-    int _status;
+class Exit : public SystemCall {
+public:
+    void Execute() override {
+        std::cout << "Exiting...\n";
+        exit(EXIT_SUCCESS);
+    }
 };
 
-struct Read : public SystemCall {
-    explicit Read(ssize_t count) : _count{count} {}
-    int operator()(IsSystemCall auto sc) override { return static_cast<int>(_count); }
- private:
-    ssize_t _count;
+class Read : public SystemCall {
+public:
+    void Execute() override {
+        char buffer[4096];
+        size_t bytes_read = read(STDIN_FILENO, buffer, sizeof(buffer));
+        printf("%zu bytes read:\n", bytes_read);
+        fflush(stdout);
+    }
 };
 
-struct Write : public SystemCall {
-    explicit Write(const void *buf, size_t count) : _buf{buf}, _count{count} {}
-    int operator()(IsSystemCall auto sc) override { return static_cast<int>(_count); }
- private:
-    const void *_buf;
-    size_t _count;
+class Write : public SystemCall {
+public:
+    void Execute() override {
+        char buffer[4096];
+        ssize_t bytes_written = write(STDOUT_FILENO, buffer, sizeof(buffer));
+        printf("%zd bytes written.\n", bytes_written);
+        fflush(stdout);
+    }
 };
 
-struct Open : public SystemCall {
-    explicit Open(const char *pathname, int flags) : _pathname{pathname}, _flags{flags} {}
-    int operator()(IsSystemCall auto sc) override { return static_cast<int>(_flags); }
- private:
-    const char *_pathname;
-    int _flags;
+class Open : public SystemCall {
+public:
+    void Execute() override {
+        int file_descriptor = open("/dev/null", O_RDONLY);
+        if (file_descriptor != -1) {
+            close(file_descriptor);
+        }
+    }
 };
 
-struct Close : public SystemCall {
-    explicit Close(int fd) : _fd{fd} {}
-    int operator()(IsSystemCall auto sc) override { return static_cast<int>(_fd); }
- private:
-    int _fd;
+class Close : public SystemCall {
+public:
+    void Execute() override {
+        close(STDIN_FILENO);
+    }
 };
 
-struct Creat : public SystemCall {
-    explicit Creat(const char *pathname, int mode) : _pathname{pathname}, _mode{mode} {}
-    int operator()(IsSystemCall auto sc) override { return static_cast<int>(_mode); }
- private:
-    const char *_pathname;
-    int _mode;
+class Creat : public SystemCall {
+public:
+    void Execute() override {
+        creat("/tmp/test.txt", 0644);
+    }
 };
 
-struct Unlink : public SystemCall {
-    explicit Unlink(const char *pathname) : _pathname{pathname} {}
-    int operator()(IsSystemCall auto sc) override { return static_cast<int>(_pathname); }
- private:
-    const char *_pathname;
+class Unlink : public SystemCall {
+public:
+    void Execute() override {
+        unlink("/tmp/test.txt");
+    }
 };
 
-struct GetPid : public SystemCall {
-    explicit GetPid() {}
-    int operator()(IsSystemCall auto sc) override { return static_cast<int>(getpid()); }
+class GetPid : public SystemCall {
+public:
+    void Execute() override {
+        pid_t pid = getpid();
+        printf("Process ID: %d\n", pid);
+        fflush(stdout);
+    }
 };
 
-struct Sleep : public SystemCall {
-    explicit Sleep(unsigned int seconds) : _seconds{seconds} {}
-    int operator()(IsSystemCall auto sc) override { return static_cast<int>(sleep(_seconds)); }
- private:
-    unsigned int _seconds;
+class Sleep : public SystemCall {
+public:
+    void Execute() override {
+        sleep(5);
+    }
 };
 
-// A factory function to create instances of system call objects based on their names
-std::unique_ptr<SystemCall> CreateSystemCall(const std::string &name) {
-    // TODO: Add support for other system calls as needed
-    if (name == "exit") {
-        return std::make_unique<Exit>();
-    } else if (name == "read") {
-        return std::make_unique<Read>();
-    } else if (name == "write") {
-        return std::make_unique<Write>();
-    } else if (name == "open") {
-        return std::make_unique<Open>();
-    } else if (name == "close") {
-        return std::make_unique<Close>();
-    } else if (name == "creat") {
-        return std::make_unique<Creat>();
-    } else if (name == "unlink") {
-        return std::make_unique<Unlink>();
-    } else if (name == "getpid") {
-        return std::make_unique<GetPid>();
-    } else if (name == "sleep") {
-        return std::make_unique<Sleep>();
-    } else {
-        throw std::runtime
-error("Unsupported system call");
+using SystemCallVariant = std::variant<Exit, Read, Write, Open, Close, Creat, Unlink, GetPid, Sleep>;
+
+inline bool operator==(const SystemCallVariant& lhs, const SystemCallVariant& rhs) {
+    return std::visit([](const auto& lhs, const auto& rhs) { return lhs == rhs; }, lhs, rhs);
 }
+
+inline bool operator!=(const SystemCallVariant& lhs, const SystemCallVariant& rhs) {
+    return !(lhs == rhs);
+}
+
+std::ostream& operator<<(std::ostream& os, const SystemCallVariant& scv) {
+    std::visit([&os](const auto& v) { os << v; }, scv);
+    return os;
+}
+
+std::istream& operator>>(std::istream& is, SystemCallVariant& scv) {
+    std::string input;
+    is >> input;
+    if (input == "exit"sv) {
+        scv = Exit{};
+    } else if (input == "read"sv) {
+        scv = Read{};
+    } else if (input == "write"sv) {
+        scv = Write{};
+    } else if (input == "open"sv) {
+        scv = Open{};
+    } else if (input == "close"sv) {
+        scv = Close{};
+    } else if (input == "creat"sv) {
+        scv = Creat{};
+    } else if (input == "unlink"sv) {
+        scv = Unlink{};
+    } else if (input == "getpid"sv) {
+        scv = GetPid{};
+    } else if (input == "sleep"sv) {
+        scv = Sleep{};
+    } else {
+        throw std::invalid_argument{"Invalid system call"};
+    }
+    return is;
+}
+
+int main() {
+    while (true) {
+        try {
+            SystemCallVariant scv;
+            std::cin >> scv;
+            scv.Execute();
+        } catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << '\n';
+            break;
+        }
+    }
+    return EXIT_FAILURE;
 }
