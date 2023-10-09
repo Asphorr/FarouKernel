@@ -1,115 +1,69 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "kernel.h"
+// Kernel.c
 
-// Initialize the kernel
-void kernel_init(void) {
-    // Initialize the heap
-    heap = (void*)ALIGN(HEAP_SIZE, PAGE_SIZE);
-    heap_size = HEAP_SIZE;
+#include "Kernel.h"
 
-    // Initialize the idle thread
-    idletask = (struct thread*)kmalloc(sizeof(struct thread));
-    idletask->func = idle;
-    idletask->next = NULL;
+static file_t files[MAX_FILES];
 
-    // Initialize the system call table
-    syscall_table[SYS_EXIT] = exit;
-    syscall_table[SYS_CREATE_PROCESS] = create_process;
-    syscall_table[SYS_CREATE_THREAD] = create_thread;
-    syscall_table[SYS_YIELD] = yield;
-    syscall_table[SYS_SLEEP] = sleep;
-    syscall_table[SYS_WAKEUP] = wakeup;
-    syscall_table[SYS_TERMINATE_PROCESS] = terminate_process;
-    syscall_table[SYS_FREE_MEMORY] = free_memory;
-
-    // Enable interrupts
-    enable_interrupts();
+void init(file_t *files) {
+    memset(files, 0, sizeof(files));
 }
 
-// Handle a system call
-void kernel_handle_syscall(struct thread *thread, uint num) {
-    switch (num) {
-        case SYS_EXIT:
-            exit(thread);
-            break;
-        case SYS_CREATE_PROCESS:
-            create_process(thread);
-            break;
-        case SYS_CREATE_THREAD:
-            create_thread(thread);
-            break;
-        case SYS_YIELD:
-            yield(thread);
-            break;
-        case SYS_SLEEP:
-            sleep(thread, 1000);
-            break;
-        case SYS_WAKEUP:
-            wakeup(thread);
-            break;
-        case SYS_TERMINATE_PROCESS:
-            terminate_process(thread);
-            break;
-        case SYS_FREE_MEMORY:
-            free_memory(thread);
-            break;
-        default:
-            printf("Unknown system call %d\n", num);
-            break;
+int openFile(const char *pathname, int flags) {
+    int i = 0;
+    while (i < MAX_FILES && strcmp(files[i].path, pathname)) {
+        i++;
     }
-}
-
-// Idle loop
-void idle(void) {
-    while (1) {
-        // Check for incoming system calls
-        if (syscall_flag) {
-            syscall_flag = 0;
-            kernel_handle_syscall(idletask, syscall_number);
+    if (i == MAX_FILES) {
+        return -ENOENT;
+    } else {
+        files[i].fd = open(pathname, flags);
+        if (files[i].fd >= 0) {
+            return files[i].fd;
+        } else {
+            return -EIO;
         }
-
-        // Yield control back to the OS
-        yield(idletask);
     }
 }
 
-// Create a new process
-void create_process(struct thread *thread) {
-    // Allocate memory for the process's stack and image
-    struct memory_region *region = (struct memory_region*)kmalloc(sizeof(struct memory_region));
-    region->base = (void*)kmalloc(STACK_SIZE + IMAGE_SIZE);
-    region->size = STACK_SIZE + IMAGE_SIZE;
-
-    // Set up the process's context
-    struct process *process = (struct process*)kmalloc(sizeof(struct process));
-    process->entry = thread->func;
-    process->threads = NULL;
-    process->pid = get_pid();
-
-    // Add the process to the list of active processes
-    process->next = active_processes;
-    active_processes = process;
-
-    // Start the process
-    start_process(process);
+ssize_t readFile(int fd, void *buf, size_t count) {
+    ssize_t retval = read(fd, buf, count);
+    if (retval > 0) {
+        return retval;
+    } else if (retval == 0) {
+        return -EOF;
+    } else {
+        return -EIO;
+    }
 }
 
-// Create a new thread
-void create_thread(struct thread *thread) {
-    // Allocate memory for the thread's stack
-    struct memory_region *region = (struct memory_region*)kmalloc(sizeof(struct memory_region));
-    region->base = (void*)kmalloc(STACK_SIZE);
-    region->size = STACK_SIZE;
+ssize_t writeFile(int fd, const void *buf, size_t count) {
+    ssize_t retval = write(fd, buf, count);
+    if (retval > 0) {
+        return retval;
+    } else if (retval == 0) {
+        return -EOF;
+    } else {
+        return -EIO;
+    }
+}
 
-    // Set up the thread's context
-    struct thread *new_thread = (struct thread*)kmalloc(sizeof(struct thread));
-    new_thread->func = thread->func;
-    new_thread->next = NULL;
+off_t lseekFile(int fd, off_t offset, int whence) {
+    off_t retval = lseek(fd, offset, whence);
+    if (retval != (off_t)-1) {
+        return retval;
+    } else {
+        return -EINVAL;
+    }
+}
 
-    // Add the thread to the list of ready threads
-ready_threads = append(ready_threads, new_thread);
+int closeFile(int fd) {
+    int retval = close(fd);
+    if (retval == 0) {
+        return 0;
+    } else {
+        return -EIO;
+    }
+}
 
 // Switch to the new thread
 switch_to(new_thread);
