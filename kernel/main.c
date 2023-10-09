@@ -11,35 +11,35 @@
 extern void kernel_entry(void);
 
 // Define our kernel's name
-char kernel_name[] = "MyFirstKernel";
+const char kernel_name[] = "MyFirstKernel";
 
 // Define our kernel's version number
-int kernel_version = 0x0100;
+const uint16_t kernel_version = 0x0100;
 
 // Define our kernel's release date
-char kernel_release_date[] = "2023-09-28";
+const char kernel_release_date[] = "2023-09-28";
 
 // Define our kernel's build time
-char kernel_build_time[] = "14:30:00";
+const char kernel_build_time[] = "14:30:00";
 
 // Define our kernel's author
-char kernel_author[] = "Your Name";
+const char kernel_author[] = "Your Name";
 
 // Define our kernel's copyright information
-char kernel_copyright[] = "Copyright (C) 2023 Mikhail";
+const char kernel_copyright[] = "Copyright (C) 2023 Mikhail";
 
 // Define our kernel's license information
-char kernel_license[] = "Licensed under the MIT License";
+const char kernel_license[] = "Licensed under the MIT License";
 
 // Define our kernel's description
-char kernel_description[] = "A simple kernel for learning purposes.";
+const char kernel_description[] = "A simple kernel for learning purposes.";
 
 // Define our kernel's logo
-char kernel_logo[] = "\n\t _______ \n\t|       | \n\t|   o   | \n\t|  ---  | \n\t|________| \n";
+const char kernel_logo[] = "\n\t _______ \n\t|       | \n\t|   o   | \n\t|  ---  | \n\t|________| \n";
 
 // Print our kernel's logo and identification information
-void print_kernel_info(void) {
-    printf("%s", kernel_logo);
+static inline void print_kernel_info() {
+    puts(kernel_logo);
     printf("Kernel: %s\n", kernel_name);
     printf("Version: %d.%d\n", kernel_version >> 8, kernel_version & 0xFF);
     printf("Release Date: %s\n", kernel_release_date);
@@ -51,25 +51,20 @@ void print_kernel_info(void) {
 }
 
 // Handle keyboard input
-void handle_keyboard(struct keyboard_event *event) {
-    switch (event->keycode) {
-        case KEYCODE_ESCAPE:
-            printf("\nEscape key pressed. Shutting down...\n");
-            shutdown();
-            break;
+static inline void handle_keyboard(struct keyboard_event *event) {
+    if (event->keycode == KEYCODE_ESCAPE) {
+        printf("\nEscape key pressed. Shutting down...\n");
+        shutdown();
     }
 }
 
 // Handle display output
-void handle_display(struct display_event *event) {
-    char buffer[4096];
-    int len = event->len;
-
-    // Copy the display data into our local buffer
-    memcpy(buffer, event->data, len);
+static inline void handle_display(struct display_event *event) {
+    const char *buffer = event->data;
+    size_t len = event->len;
 
     // Print the display data to the console
-    printf("%s", buffer);
+    fputs(buffer, stdout);
 }
 
 // Main entry point
