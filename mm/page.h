@@ -1,20 +1,19 @@
-#ifndef PAGE_H
-#define PAGE_H
+class Page {
+public:
+    explicit Page(uint32_t frameNumber) : frameNumber_(frameNumber), dirty_(false), valid_(true) {}
+    ~Page() = default;
 
-#include <stdint.h>
-#include <stdbool.h>
+    void setFrameNumber(uint32_t frameNumber) { frameNumber_ = frameNumber; }
+    [[nodiscard]] uint32_t getFrameNumber() const { return frameNumber_; }
 
-// Structure to represent a page in the pagetable
-typedef struct Page {
-    uint32_t frameNumber; // Frame number where this page is stored
-    bool dirty;         // Whether or not this page has been modified
-    bool valid;         // Whether or not this page is currently in use
-} Page;
+    void setDirty(bool dirty) { dirty_ = dirty; }
+    [[nodiscard]] bool isDirty() const { return dirty_; }
 
-// Function prototypes
-Page* allocatePage();
-void deallocatePage(Page* page);
-void markPageDirty(Page* page);
-void markPageValid(Page* page);
+    void setValid(bool valid) { valid_ = valid; }
+    [[nodiscard]] bool isValid() const { return valid_; }
 
-#endif  // PAGE_H
+private:
+    uint32_t frameNumber_;
+    bool dirty_;
+    bool valid_;
+};
