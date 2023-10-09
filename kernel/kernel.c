@@ -1,68 +1,76 @@
-// Kernel.c
-
 #include "Kernel.h"
 
 static file_t files[MAX_FILES];
 
-void init(file_t *files) {
-    memset(files, 0, sizeof(files));
+void init() {
+    // Initialize the file system
+    fs_init();
+
+    // Set up the interrupt handlers
+    setup_interrupts();
+
+    // Start the first thread
+    start_first_thread();
 }
 
 int openFile(const char *pathname, int flags) {
-    int i = 0;
-    while (i < MAX_FILES && strcmp(files[i].path, pathname)) {
-        i++;
-    }
-    if (i == MAX_FILES) {
+    // Check if the file exists
+    if (!fs_exists(pathname)) {
         return -ENOENT;
-    } else {
-        files[i].fd = open(pathname, flags);
-        if (files[i].fd >= 0) {
-            return files[i].fd;
-        } else {
-            return -EIO;
-        }
     }
+
+    // Open the file
+    int fd = fs_open(pathname, flags);
+    if (fd < 0) {
+        return -EIO;
+    }
+
+    // Return the file descriptor
+    return fd;
 }
 
 ssize_t readFile(int fd, void *buf, size_t count) {
-    ssize_t retval = read(fd, buf, count);
-    if (retval > 0) {
-        return retval;
-    } else if (retval == 0) {
-        return -EOF;
-    } else {
+    // Read data from the file
+    ssize_t bytesRead = fs_read(fd, buf, count);
+    if (bytesRead <= 0) {
         return -EIO;
     }
+
+    // Return the number of bytes read
+    return bytesRead;
 }
 
 ssize_t writeFile(int fd, const void *buf, size_t count) {
-    ssize_t retval = write(fd, buf, count);
-    if (retval > 0) {
-        return retval;
-    } else if (retval == 0) {
-        return -EOF;
-    } else {
+    // Write data to the file
+    ssize_t bytesWritten = fs_write(fd, buf, count);
+    if (bytesWritten <= 0) {
         return -EIO;
     }
+
+    // Return the number of bytes written
+    return bytesWritten;
 }
 
 off_t lseekFile(int fd, off_t offset, int whence) {
-    off_t retval = lseek(fd, offset, whence);
-    if (retval != (off_t)-1) {
-        return retval;
-    } else {
+    // Seek to the specified position in the file
+    off_t pos = fs_lseek(fd, offset, whence);
+    if (pos < 0) {
         return -EINVAL;
     }
+
+    // Return the current position in the file
+    return pos;
 }
 
 int closeFile(int fd) {
-    int retval = close(fd);
-    if (retval == 0) {
-        return 0;
-    } else {
+    // Close the file
+    int result = fs_close(fd);
+    if (result < 0) {
         return -EIO;
     }
+
+    // Return success
+    return 0;
 }
 
 // Switch to the new thread
