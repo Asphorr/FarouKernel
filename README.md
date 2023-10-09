@@ -8,7 +8,6 @@ To get started with Funicod Kernel, follow these steps:
 
 # 1: Clone this repository to your local machine.
 Until ill release it in alpha, i cant really tell you a better way to install it. Time goes, and i trying my best to get into time as fast i can.
-Features
 # Funicod Kernel includes several key features, including:
 
 Regular updating.
