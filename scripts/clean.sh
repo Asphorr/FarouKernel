@@ -1,23 +1,39 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
+# Set up some variables
+FUNICOD="funicod"
+LIBNAME="lib$FUNICOD.a"
+TESTEXE="test_$FUNICOD"
+BENCHEXE="bench_$FUNICOD"
+OBJFILES=$(ls | grep "\.o$")
 
 # Remove object files
-rm -f *.o
+for objfile in $OBJFILES; do
+  rm "$objfile"
+done
 
 # Remove executable
-rm -f ${funicod}
+if [[ -x "$FUNICOD" ]]; then
+  rm "$FUNICOD"
+fi
 
 # Remove library files
-rm -f lib${funicod}.a
+if [[ -e "$LIBNAME" ]]; then
+  rm "$LIBNAME"
+fi
 
 # Remove test executable
-rm -f test_${funicod}
+if [[ -x "$TESTEXE" ]]; then
+  rm "$TESTEXE"
+fi
 
 # Remove benchmark executable
-rm -f bench_${funicod}
+if [[ -x "$BENCHEXE" ]]; then
+  rm "$BENCHEXE"
+fi
 
 # Remove any remaining files
-rm -rf */*.dSYM
-rm -rf */*.DS_Store
+find . \( -name "*.dSYM" -or -name "*.DS_Store" \) -delete
 
 # Remove empty directories
-rmdir --ignore-fail-on-non-empty */*/
+find . -type d -empty -exec rmdir {} \;
