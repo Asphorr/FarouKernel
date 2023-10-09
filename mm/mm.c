@@ -1,54 +1,78 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include "mm.h"
+#include <iostream>
+#include <memory>
+#include <new>
+#include <type_traits>
+#include <utility>
 
-// Memory management functions
-void *malloc(size_t size) {
-    void *ptr = NULL;
-    // TODO: Implement malloc functionality
-    return ptr;
+// A simple mallocator implementation
+class Mallocator {
+public:
+    // Create a new instance of the mallocator
+    static std::shared_ptr<Mallocator> create() {
+        return std::make_shared<Mallocator>();
+    }
+
+    // Allocate memory using the mallocator
+    void* allocate(size_t size) {
+        return ::operator new(size);
+    }
+
+    // Free allocated memory
+    void free(void* ptr) {
+        ::operator delete(ptr);
+    }
+};
+
+// A custom mallocator implementation that uses mmap and munmap
+class CustomMallocator : public Mallocator {
+public:
+    // Constructor takes a string argument representing the name of the allocator
+    explicit CustomMallocator(const char* name) : _name{name} {}
+
+    // Override the allocate method to use mmap instead of the default operator new
+    void* allocate(size_t size) override {
+        auto result = ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (result == MAP_FAILED) {
+            throw std::bad_alloc();
+        }
+        return result;
+    }
+
+    // Override the free method to use munmap instead of the default operator delete
+    void free(void* ptr) override {
+        ::munmap(ptr, 0);
+    }
+private:
+    const char* _name;
+};
+
+// A utility function to create a unique_ptr with a custom deleter
+template <typename T>
+auto make_unique_with_custom_delete(Mallocator& allocator) {
+    struct Deleter {
+        void operator()(T* p) {
+            p->~T();
+            allocator.free(p);
+        }
+    };
+    return std::unique_ptr<T, Deleter>{static_cast<T*>(allocator.allocate(sizeof(T)))};
 }
 
-void free(void *ptr) {
-    // TODO: Implement free functionality
-}
+int main() {
+    // Create a shared pointer to the default mallocator
+    auto defaultAllocator = Mallocator::create();
 
-void *realloc(void *ptr, size_t size) {
-    void *new_ptr = NULL;
-    // TODO: Implement realloc functionality
-    return new_ptr;
-}
+    // Create a shared pointer to the custom mallocator
+    auto customAllocator = CustomMallocator::create("my_mallocator");
 
-// Virtual memory functions
-void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
-    void *ptr = NULL;
-    // TODO: Implement mmap functionality
-    return ptr;
-}
+    // Create a unique_ptr with a custom deleter using the default mallocator
+    auto myUniquePtr = make_unique_with_custom_delete<MyClass>(defaultAllocator);
 
-int mprotect(void *addr, size_t length, int prot) {
-    // TODO: Implement mprotect functionality
-    return 0;
-}
+    // Create another unique_ptr with a custom deleter using the custom mallocator
+    auto myOtherUniquePtr = make_unique_with_custom_delete<MyClass>(customAllocator);
 
-int munmap(void *addr, size_t length) {
-    // TODO: Implement munmap functionality
-    return 0;
-}
+    // Do something with the unique_ptrs...
 
-// Shared memory functions
-int shmget(key_t key, size_t size, int flag) {
-    // TODO: Implement shmget functionality
-    return 0;
-}
-
-void *shmat(int shmid, const void *addr, int flag) {
-    void *ptr = NULL;
-    // TODO: Implement shmat functionality
-    return ptr;
-}
-
-int shmctl(int shmid, int cmd, struct shmid_ds *buf) {
-    // TODO: Implement shmctl functionality
+    // When they go out of scope, the custom deleters will automatically call the correct free functions
     return 0;
 }
