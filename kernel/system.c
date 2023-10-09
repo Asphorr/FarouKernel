@@ -1,115 +1,41 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/mman.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <asm/io.h>
-#include <asm/sigcontext.h>
-#include <asm/system.h>
+#include <iostream>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <functional>
 
-// Define the IDT entries
-const int num_ids = 256;
-idt_entry_t idts[num_ids];
+// Using C++23 features
+using namespace std::literals; // Enable string literals
 
-// Define the GDT entries
-const int num_gds = 256;
-gdt_entry_t gdts[num_gds];
-
-// Define the interrupt handlers
-void (*handlers[])(struct interrupt_frame *) = {
-    [0x20] = &custom_handler, // Vector 0x20: Custom handler
-    [0x21] = &divide_by_zero_handler, // Vector 0x21: Divide by zero
-    [0x22] = &debug_handler, // Vector 0x22: Debug
+struct User {
+    std::string name;
+    std::string email;
 };
 
-// Initialize the IDT and GDT
-void init_idt_gdt() {
-    // Initialize the IDT with the default entry
-    for (int i = 0; i < num_ids; i++) {
-        idts[i].offset = (uintptr_t)default_handler;
-        idts[i].selector = KERNEL_CS;
-        idts[i].ISTS = 0;
-        idts[i].TYPE = 0x0A; // Interrupt gate, 32-bit
+class System {
+public:
+    void addUser(std::string&& name, std::string&& email) {
+        users.push_back({std::move(name), std::move(email)});
     }
 
-    // Initialize the GDT with the default entry
-    for (int i = 0; i < num_gds; i++) {
-        gdts[i].ADDRESS = (uintptr_t)default_handler;
-        gdts[i].LIMIT = 0xFFFFF;
-        gdts[i].SEGMENTS = 0x0A; // Code segment, read-only
+    [[nodiscard]] bool hasUserWithEmail(const std::string& email) const noexcept {
+        return std::any_of(users.begin(), users.end(), [&email](const auto& user) {
+            return user.email == email;
+        });
     }
-}
 
-// Load the IDT and GDT
-void load_idt_gdt() {
-    // Load the IDT
-    lidt(idts);
-
-    // Load the GDT
-    lgdt(gdts);
-}
-
-// Custom interrupt handler
-void custom_handler(struct interrupt_frame *frame) {
-    printf("Custom interrupt handler called\n");
-
-    // Handle the interrupt here
-}
-
-// Divide by zero handler
-void divide_by_zero_handler(struct interrupt_frame *frame) {
-    printf("Divide by zero handler called\n");
-
-    // Handle the divide by zero fault here
-}
-
-// Debug handler
-void debug_handler(struct interrupt_frame *frame) {
-    printf("Debug handler called\n");
-
-    // Handle the debug event here
-}
-
-// Default interrupt handler
-void default_handler(struct interrupt_frame *frame) {
-    printf("Default interrupt handler called\n");
-
-    // Handle the interrupt here
-}
+private:
+    std::vector<User> users;
+};
 
 int main() {
-    // Initialize the IDT and GDT
-    init_idt_gdt();
+    System system;
 
-    // Load the IDT and GDT
-    load_idt_gdt();
+    system.addUser("John Doe"s, "johndoe@example.com"s);
+    system.addUser("Jane Doe"s, "janedoe@example.com"s);
 
-    // Enable interrupts in the CPU
-    sti();
-
-    // Perform some operations that may trigger interrupts
-    printf("Before fork()\n");
-    pid_t pid = fork();
-    if (pid == -1) {
-        perror("fork");
-        exit(EXIT_FAILURE);
-    }
-
-    if (pid > 0) {
-        // Parent process
-        printf("Parent process %ld\n", (long)getpid());
-    } else {
-        // Child process
-        printf("Child process %ld\n", (long)getpid());
-    }
-
-    // Wait for the child process to finish
-    wait(NULL);
-
-    // Disable interrupts in the CPU
-    cli();
+    std::cout << "Has John Doe? "sv << system.hasUserWithEmail("johndoe@example.com"s) << '\n';
+    std::cout << "Has Jane Doe? "sv << system.hasUserWithEmail("janedoe@example.com"s) << '\n';
 
     return 0;
 }
