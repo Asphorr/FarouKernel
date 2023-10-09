@@ -1,39 +1,77 @@
 #!/usr/bin/env bash
 
-# Set up some variables
-FUNICOD="funicod"
-LIBNAME="lib$FUNICOD.a"
-TESTEXE="test_$FUNICOD"
-BENCHEXE="bench_$FUNICOD"
-OBJFILES=$(ls | grep "\.o$")
+# Define functions for removing various types of files
+remove_object_files() {
+  local objfiles
+  objfiles=$(ls | grep "\.o$")
+  if [[ -n "$objfiles" ]]; then
+    echo "Removing object files:"
+    printf "%s\n" "${objfiles[@]}"
+    rm --force "${objfiles[@]}"
+  fi
+}
 
-# Remove object files
-for objfile in $OBJFILES; do
-  rm "$objfile"
-done
+remove_executable() {
+  local funicod
+  funicod="$1"
+  if [[ -x "$funicod" ]]; then
+    echo "Removing executable '$funicod'"
+    rm --force "$funicod"
+  fi
+}
 
-# Remove executable
-if [[ -x "$FUNICOD" ]]; then
-  rm "$FUNICOD"
-fi
+remove_library_files() {
+  local libname
+  libname="$1"
+  if [[ -e "$libname" ]]; then
+    echo "Removing library file '$libname'"
+    rm --force "$libname"
+  fi
+}
 
-# Remove library files
-if [[ -e "$LIBNAME" ]]; then
-  rm "$LIBNAME"
-fi
+remove_test_exe() {
+  local testexe
+  testexe="$1"
+  if [[ -x "$testexe" ]]; then
+    echo "Removing test executable '$testexe'"
+    rm --force "$testexe"
+  fi
+}
 
-# Remove test executable
-if [[ -x "$TESTEXE" ]]; then
-  rm "$TESTEXE"
-fi
+remove_bench_exe() {
+  local benchexe
+  benchexe="$1"
+  if [[ -x "$benchexe" ]]; then
+    echo "Removing benchmark executable '$benchexe'"
+    rm --force "$benchexe"
+  fi
+}
 
-# Remove benchmark executable
-if [[ -x "$BENCHEXE" ]]; then
-  rm "$BENCHEXE"
-fi
+remove_dsym_and_store() {
+  find . \( -name "*.dSYM" -or -name "*.DS_Store" \) -delete
+}
 
-# Remove any remaining files
-find . \( -name "*.dSYM" -or -name "*.DS_Store" \) -delete
+remove_empty_dirs() {
+  find . -type d -empty -exec rmdir {} \;
+}
 
-# Remove empty directories
-find . -type d -empty -exec rmdir {} \;
+# Main function
+main() {
+  # Set up some variables
+  funicod="funicod"
+  libname="lib$funicod.a"
+  testexe="test_$funicod"
+  benchexe="bench_$funicod"
+
+  # Call functions to remove various types of files
+  remove_object_files
+  remove_executable "$funicod"
+  remove_library_files "$libname"
+  remove_test_exe "$testexe"
+  remove_bench_exe "$benchexe"
+  remove_dsym_and_store
+  remove_empty_dirs
+}
+
+# Call main function
+main
