@@ -1,82 +1,67 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
+#include <iostream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <functional>
+#include <memory>
+#include <utility>
+#include <type_traits>
 
-#define MAX_ARGS 64
+using namespace std::literals;
 
-// Function prototypes
-void parseCommandLineArguments(char** args, int* argc);
-void initializeSyscallTable();
-void setUpProgramEnvironment();
-void startProgram(int argc, char** args);
-void waitForProgramToFinish();
-void cleanupAndExit();
+class Program {
+public:
+    explicit Program(const std::vector<std::string>& args) : _args{args}, _env{} {}
+    
+    void run() {
+        auto syscallTable = createSyscallTable();
+        
+        // Set up the program environment
+        setupEnv(_env);
+        
+        // Start the program
+        startProg(_args, _env, syscallTable);
+        
+        // Wait for the program to finish
+        waitForProgToFinish();
+        
+        // Clean up and exit
+        cleanupAndExit();
+    }
+private:
+    static std::unique_ptr<SyscallTable> createSyscallTable() {
+        // Create the system call table
+        // ...
+    }
+    
+    static void setupEnv(const Env& env) {
+        // Set up the program environment
+        // ...
+    }
+    
+    static void startProg(const std::vector<std::string>& args, const Env& env, SyscallTable& syscallTable) {
+        // Start the program
+        // ...
+    }
+    
+    static void waitForProgToFinish() {
+        // Wait for the program to finish
+        // ...
+    }
+    
+    static void cleanupAndExit() {
+        // Clean up and exit
+        // ...
+    }
+};
 
-int main(void) {
-    // Allocate memory for command line arguments
-    char** args = calloc(MAX_ARGS + 1, sizeof(char*));
-    if (!args) {
-        fprintf(stderr, "Error: Failed to allocate memory for command line arguments\n");
+int main(int argc, char** argv) {
+    try {
+        Program p{argv};
+        p.run();
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << '\n';
         return EXIT_FAILURE;
     }
-
-    // Parse command line arguments
-    int argc = 0;
-    parseCommandLineArguments(args, &argc);
-
-    // Initialize the system call table
-    initializeSyscallTable();
-
-    // Set up the program environment
-    setUpProgramEnvironment();
-
-    // Start the program
-    startProgram(argc, args);
-
-    // Wait for the program to finish
-    waitForProgramToFinish();
-
-    // Clean up and exit
-    cleanupAndExit();
-
     return EXIT_SUCCESS;
-}
-
-void parseCommandLineArguments(char** args, int* argc) {
-    // Parse the command line arguments
-    const char* delimiters = " \t";
-    char* token = strtok(NULL, delimiters);
-    while (token && *argc < MAX_ARGS) {
-        args[(*argc)++] = token;
-        token = strtok(NULL, delimiters);
-    }
-}
-
-void initializeSyscallTable() {
-    // Initialize the system call table
-    // ...
-}
-
-void setUpProgramEnvironment() {
-    // Set up the program environment
-    // ...
-}
-
-void startProgram(int argc, char** args) {
-    // Start the program
-    // ...
-}
-
-void waitForProgramToFinish() {
-    // Wait for the program to finish
-    // ...
-}
-
-void cleanupAndExit() {
-    // Clean up and exit
-    free(args);
-    exit(EXIT_SUCCESS);
 }
