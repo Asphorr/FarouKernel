@@ -87,7 +87,7 @@ Please keep in mind that Funicod Kernel is still in early stages of development.
 
 Вот как это сделать:
 
-wget https://raw.githubusercontent.com/FunicodKernel/installer/master/install.sh
+wget https://raw.githubusercontent.com/funicod/scripts/install.sh
 chmod +x ./install.sh
 sudo ./install.sh
 Обратите внимание, что сценарий предполагает, что вы хотите установить Funicod Kernel вместе с другой операционной системой. Если вы хотите стереть весь жесткий диск и выделить его только для Funicod Kernel, то при выполнении скрипта необходимо передать флаг -e. Например:
