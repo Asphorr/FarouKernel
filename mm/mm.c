@@ -1,78 +1,78 @@
+#include <concepts>
 #include <iostream>
 #include <memory>
-#include <new>
+#include <string>
+#include <tuple>
 #include <type_traits>
-#include <utility>
+#include <variant>
 
-// A simple mallocator implementation
-class Mallocator {
-public:
-    // Create a new instance of the mallocator
-    static std::shared_ptr<Mallocator> create() {
-        return std::make_shared<Mallocator>();
-    }
-
-    // Allocate memory using the mallocator
-    void* allocate(size_t size) {
-        return ::operator new(size);
-    }
-
-    // Free allocated memory
-    void free(void* ptr) {
-        ::operator delete(ptr);
-    }
+// Define a concept for a mallocator
+template <typename T>
+concept Mallocator = requires (T t) {
+    { t.allocate() };
+    { t.deallocate() };
 };
 
-// A custom mallocator implementation that uses mmap and munmap
-class CustomMallocator : public Mallocator {
+// Implement a default mallocator
+class DefaultMallocator {
 public:
-    // Constructor takes a string argument representing the name of the allocator
-    explicit CustomMallocator(const char* name) : _name{name} {}
+    void allocate();
+    void deallocate();
+};
 
-    // Override the allocate method to use mmap instead of the default operator new
-    void* allocate(size_t size) override {
-        auto result = ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (result == MAP_FAILED) {
-            throw std::bad_alloc();
-        }
-        return result;
+// Implement a custom mallocator
+class CustomMallocator {
+public:
+    explicit CustomMallocator(const char* name) : name_(name) {}
+
+    void allocate();
+    void deallocate();
+private:
+    const char* name_;
+};
+
+// Define a trait to determine whether a given type is a mallocator
+template <typename T>
+struct IsMallocator : public std::false_type {};
+
+template <>
+struct IsMallocator<DefaultMallocator> : public std::true_type {};
+
+template <>
+struct IsMallocator<CustomMallocator> : public std::true_type {};
+
+// Define a helper class to wrap around a mallocator
+template <typename T>
+requires IsMallocator<T>::value
+class MallocatorWrapper {
+public:
+    explicit MallocatorWrapper(T& mallocator) : mallocator_(mallocator) {}
+
+    void allocate() {
+        mallocator_.allocate();
     }
 
-    // Override the free method to use munmap instead of the default operator delete
-    void free(void* ptr) override {
-        ::munmap(ptr, 0);
+    void deallocate() {
+        mallocator_.deallocate();
     }
 private:
-    const char* _name;
+    T& mallocator_;
 };
 
-// A utility function to create a unique_ptr with a custom deleter
+// Define a helper function to create a unique pointer with a custom delete
 template <typename T>
-auto make_unique_with_custom_delete(Mallocator& allocator) {
-    struct Deleter {
-        void operator()(T* p) {
-            p->~T();
-            allocator.free(p);
-        }
-    };
-    return std::unique_ptr<T, Deleter>{static_cast<T*>(allocator.allocate(sizeof(T)))};
+auto make_unique_with_custom_delete(const char* name) -> std::unique_ptr<T, MallocatorWrapper<decltype(detail::getMallocator<T>(name))>> {
+    return std::unique_ptr<T, MallocatorWrapper<decltype(detail::getMallocator<T>(name))>>{detail::getMallocator<T>(name).allocate(), MallocatorWrapper<decltype(detail::getMallocator<T>(name))>{}};
 }
 
 int main() {
-    // Create a shared pointer to the default mallocator
-    auto defaultAllocator = Mallocator::create();
+    auto defaultAllocator = detail::getMallocator<int>();
+    auto customAllocator = detail::getMallocator<int>("my_mallocator");
 
-    // Create a shared pointer to the custom mallocator
-    auto customAllocator = CustomMallocator::create("my_mallocator");
+    auto myUniquePtr = make_unique_with_custom_delete<int>(defaultAllocator);
+    auto myOtherUniquePtr = make_unique_with_custom_delete<int>(customAllocator);
 
-    // Create a unique_ptr with a custom deleter using the default mallocator
-    auto myUniquePtr = make_unique_with_custom_delete<MyClass>(defaultAllocator);
+    // do something with the unique_ptrs...
 
-    // Create another unique_ptr with a custom deleter using the custom mallocator
-    auto myOtherUniquePtr = make_unique_with_custom_delete<MyClass>(customAllocator);
-
-    // Do something with the unique_ptrs...
-
-    // When they go out of scope, the custom deleters will automatically call the correct free functions
     return 0;
 }
