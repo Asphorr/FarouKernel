@@ -1,67 +1,108 @@
-#ifndef _DEVFS_H
-#define _DEVFS_H
+#pragma once
 
-#include <sys/types.h>
-#include <sys/stat.h>
+#include <string>
+#include <vector>
+#include <memory>
+#include <functional>
 
-/* Device file operations */
-struct devfs_ops {
-    int (*open)(struct file *file);
-    int (*close)(struct file *file);
-    ssize_t (*read)(struct file *file, char __user *buf, size_t count, loff_t *ppos);
-    ssize_t (*write)(struct file *file, const char __user *buf, size_t count, loff_t *ppos);
-    int (*ioctl)(struct file *file, unsigned int cmd, unsigned long arg);
-    int (*mmap)(struct file *file, struct vm_area_struct *vma);
+class DevFsDevice {
+public:
+    typedef std::shared_ptr<DevFsDevice> Ptr;
+
+    explicit DevFsDevice(const std::string& name, uint8_t major, uint8_t minor, bool isDirectory = false);
+    virtual ~DevFsDevice();
+
+    static Ptr create(const std::string& name, uint8_t major, uint8_t minor, bool isDirectory = false);
+
+    inline const std::string& getName() const { return m_name; };
+    inline uint8_t getMajor() const { return m_major; };
+    inline uint8_t getMinor() const { return m_minor; };
+    inline bool isDirectory() const { return m_isDirectory; };
+
+protected:
+    std::string m_name;
+    uint8_t m_major;
+    uint8_t m_minor;
+    bool m_isDirectory;
 };
 
-/* Device file descriptor */
-struct devfs_dfd {
-    struct file file;
-    struct devfs_ops ops;
+class DevFsFile : public DevFsDevice {
+public:
+    typedef std::shared_ptr<DevFsFile> Ptr;
+
+    explicit DevFsFile(const std::string& name, uint8_t major, uint8_t minor);
+    virtual ~DevFsFile();
+
+    static Ptr create(const std::string& name, uint8_t major, uint8_t minor);
+
+    virtual int open(int flags);
+    virtual int close();
+    virtual ssize_t read(char* buf, size_t count, off_t offset);
+    virtual ssize_t write(const char* buf, size_t count, off_t offset);
+    virtual int ioctl(unsigned int request, unsigned long argument);
+    virtual int mmap(struct vm_area_struct* vma);
+
+protected:
+    int m_flags;
 };
 
-/* Device file */
-struct devfs_device {
-    dev_t dev;
-    struct cdev cdev;
-    struct devfs_ops ops;
+class DevFsDirectory : public DevFsDevice {
+public:
+    typedef std::shared_ptr<DevFsDirectory> Ptr;
+
+    explicit DevFsDirectory(const std::string& name, uint8_t major, uint8_t minor);
+    virtual ~DevFsDirectory();
+
+    static Ptr create(const std::string& name, uint8_t major, uint8_t minor);
+
+    virtual int open(int flags);
+    virtual int close();
+    virtual ssize_t read(char* buf, size_t count, off_t offset);
+    virtual ssize_t write(const char* buf, size_t count, off_t offset);
+    virtual int ioctl(unsigned int request, unsigned long argument);
+    virtual int mmap(struct vm_area_struct* vma);
+
+    virtual int addChild(Ptr child);
+    virtual int removeChild(Ptr child);
+
+protected:
+    std::vector<Ptr> m_children;
 };
 
-#define DEVFSDirectory(name, parent) \
-    ((struct devfs_directory *)kmalloc(sizeof(struct devfs_directory), GFP_KERNEL))->name = name; \
-    ((struct devfs_directory *)kmalloc(sizeof(struct devfs_directory), GFP_KERNEL))->parent = parent;
+class DevFsEventHandler {
+public:
+    typedef std::shared_ptr<DevFsEventHandler> Ptr;
 
-#define DEVFSPrivateData(priv) \
-    ((struct devfs_private_data *)kmalloc(sizeof(struct devfs_private_data), GFP_KERNEL))->priv = priv;
+    explicit DevFsEventHandler(std::function<void(uint32_t)> callback);
+    virtual ~DevFsEventHandler();
 
-#define DEVFSSetup(dev, type, major, minor, name, private_data) \
-    do { \
-        dev->dev = MkDev(major, minor); \
-        dev->type = type; \
-        dev->name = name; \
-        dev->private_data = private_data; \
-    } while (0)
+    static Ptr create(std::function<void(uint32_t)> callback);
 
-#define DEVFSOpen(dev, flags) \
-    do { \
-        if (!try_module_get(THIS_MODULE)) \
-            return -ENODEV; \
-        return devfs_open(dev, flags); \
-    } while (0)
+    virtual void handleEvent(uint32_t event);
 
-#define DEVFSClose(dev) \
-    do { \
-        module_put(THIS_MODULE); \
-        devfs_close(dev); \
-    } while (0)
+protected:
+    std::function<void(uint32_t)> m_callback;
+};
 
-#define DEVFSIoctl(dev, cmd, arg) \
-    devfs_ioctl(dev, cmd, arg)
+class DevFsManager {
+public:
+    typedef std::shared_ptr<DevFsManager> Ptr;
 
-#define DEVFSMMap(dev, vma) \
-    devfs_mmap(dev, vma)
+    static Ptr create();
 
-#define DEVFSEvent(dev, event) \
-    devfs_event(dev, event)
+    virtual int init();
+    virtual int deInit();
 
-#endif  // _DEVFS_H
+    virtual int mount(const std::string& path);
+    virtual int umount(const std::string& path);
+
+    virtual int addDevice(DevFsDevice::Ptr device);
+    virtual int removeDevice(DevFsDevice::Ptr device);
+
+    virtual int addEventHandler(DevFsEventHandler::Ptr handler);
+    virtual int removeEventHandler(DevFsEventHandler::Ptr handler);
+
+protected:
+    std::vector<DevFsDevice::Ptr> m_devices;
+    std::vector<DevFsEventHandler::Ptr> m_handlers;
+};
