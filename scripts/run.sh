@@ -1,33 +1,27 @@
 #!/bin/bash
 
-# Set the project name
+# Project settings
 PROJECT_NAME="funicod"
-
-# Set the target architecture
 TARGET_ARCHITECTURE="x86_64"
 
-# Set the C compiler
+# Compiler settings
 CC=gcc
-
-# Set the C++ compiler
 CXX=g++
-
-# Set the linker
 LD=ld
 
-# Set the flags for the C compiler
-CFLAGS="-Wall -O3 -flto -mtune=$TARGET_ARCHITECTURE -march=$TARGET_ARCHITECTURE"
+# Flags for C compiler
+CFLAGS="-Wall -O3 -march=$TARGET_ARCHITECTURE -mtune=$TARGET_ARCHITECTURE -std=c99"
 
-# Set the flags for the C++ compiler
-CXXFLAGS="$CFLAGS -std=c++17"
+# Flags for C++ compiler
+CXXFLAGS="-Wall -O3 -march=$TARGET_ARCHITECTURE -mtune=$TARGET_ARCHITECTURE -std=c++11"
 
-# Set the libraries to link against
+# Libraries to link against
 LIBS="-lpthread -lrt -lm"
 
-# Set the source files
+# Source files
 SOURCES=(main.c utils.c)
 
-# Set the object files
+# Object files
 OBJECTS=(${SOURCES[@]:%.*}.o)
 
 # Build the objects
@@ -58,9 +52,6 @@ echo "Running benchmark..."
 
 # Wait for the user to press Enter again
 read -p "Press Enter to continue... "
-
-# Clean up
-rm -f ${OBJECTS[*]} $PROJECT_NAME
 
 # Clean up
 rm -f ${OBJECTS[*]} $PROJECT_NAME
