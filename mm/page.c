@@ -1,80 +1,37 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "page.h"
+#include <iostream>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <numeric>
 
-// Global variables
-static int numPages = 0;
-static Page* pages = NULL;
-
-// Function definitions
-
-// Allocate a new page and return a pointer to it
-Page* allocatePage() {
-    Page* newPage = malloc(sizeof(struct Page));
-    newPage->frameNumber = -1;
-    newPage->dirty = false;
-    newPage->valid = false;
-    numPages++;
-    pages = realloc(pages, sizeof(Page*) * numPages);
-    pages[numPages-1] = newPage;
-    return newPage;
-}
-
-// Deallocate a page and release its resources
-void deallocatePage(Page* page) {
-    numPages--;
-    page->frameNumber = -1;
-    page->dirty = false;
-    page->valid = false;
-    free(page);
-    pages = realloc(pages, sizeof(Page*) * numPages);
-}
-
-// Mark a page as dirty
-void markPageDirty(Page* page) {
-    page->dirty = true;
-}
-
-// Mark a page as valid
-void markPageValid(Page* page) {
-    page->valid = true;
-}
-
-// Initialize the page table
-void initPageTable() {
-    numPages = 0;
-    pages = malloc(sizeof(Page*) * 16);
-}
-
-// Cleanup the page table
-void cleanupPageTable() {
-    while (numPages > 0) {
-        deallocatePage(pages[numPages-1]);
+// Function to read input from user
+void getInput(std::vector<double>& numbers) {
+    double num;
+    while (true) {
+        std::cin >> num;
+        if (!num) break;
+        numbers.push_back(num);
     }
-    free(pages);
 }
 
+// Function to compute sum of squares
+double sumSquares(const std::vector<double>& numbers) {
+    return std::accumulate(numbers.begin(), numbers.end(), 0.0, [](double acc, double x){return acc + x * x;});
+}
+
+// Function to compute product of positive numbers
+double prodPositive(const std::vector<double>& numbers) {
+    auto posNumbers = std::copy_if(numbers.begin(), numbers.end(), [] (double x) {return x > 0;});
+    return std::reduce(posNumbers.begin(), posNumbers.end(), 1.0, std::multiplies<>());
+}
+
+// Main program
 int main() {
-    initPageTable();
-
-    // Create some pages
-    Page* page1 = allocatePage();
-    Page* page2 = allocatePage();
-    Page* page3 = allocatePage();
-
-    // Mark one of the pages as dirty
-    markPageDirty(page2);
-
-    // Accessing an invalid page should crash the program
-    printf("%p\n", page3->frameNumber);
-
-    // Clean up
-    deallocatePage(page1);
-    deallocatePage(page2);
-    deallocatePage(page3);
-
-    cleanupPageTable();
-
+    std::vector<double> numbers;
+    getInput(numbers);
+    
+    std::cout << "Sum of squares: " << sumSquares(numbers) << '\n';
+    std::cout << "Product of positive numbers: " << prodPositive(numbers) << '\n';
+    
     return 0;
 }
