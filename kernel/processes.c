@@ -1,85 +1,110 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "processes.h"
 
-// Represents a process running on the system
-struct process {
-    char *name;                   // Name of the process
-    int pid;                      // Process ID
-    struct proc_state state;     // State of the process (e.g., running, sleeping, stopped)
-    struct process *next;       // Pointer to the next process in the list
-};
+// Define a maximum number of processes
+#define MAX_PROCESSES 64
 
-// Represents the current state of a process
-struct proc_state {
-    int running;                // True if the process is currently running
-    int sleeping;               // True if the process is sleeping
-    int stopped;                // True if the process has been stopped
-};
+// Structure to represent a process
+typedef struct process {
+    char* name;         // Name of the process
+    int pid;            // Unique identifier for each process
+    bool running;       // Whether or not the process is currently running
+    bool sleeping;      // Whether or not the process is currently sleeping
+    bool stopped;       // Whether or not the process has been terminated
+    void* stack_pointer;   // Pointer to the top of the process's stack
+    struct process* next;  // Pointer to the next process in the linked list
+} process;
 
-// Initializes the process manager
+// Global variable to store the head of the linked list of processes
+static process* process_head = NULL;
+
+// Function to initialize the process manager
 void init_process_manager() {
-    // Create an empty list of processes
-    struct process *process_list = NULL;
-
-    // Set up the first process (the idle process)
-    struct process *idle_process = malloc(sizeof(struct process));
-    idle_process->name = "Idle";
-    idle_process->pid = 0;
-    idle_process->state.running = true;
-    idle_process->state.sleeping = false;
-    idle_process->state.stopped = false;
-    process_list = idle_process;
-
-    // Set up the second process (the processor)
-    struct process *processor_process = malloc(sizeof(struct process));
-    processor_process->name = "Processor";
-    processor_process->pid = 1;
-    processor_process->state.running = true;
-    processor_process->state.sleeping = false;
-    processor_process->state.stopped = false;
-    process_list = processor_process;
+    // Create two initial processes: one for the idle task and one for the processor
+    process* idle_task = malloc(sizeof(process));
+    strcpy(idle_task->name, "Idle Task");
+    idle_task->pid = 0;
+    idle_task->running = true;
+    idle_task->sleeping = false;
+    idle_task->stack_pointer = NULL;
+    idle_task->next = NULL;
+    
+    process* processor = malloc(sizeof(process));
+    strcpy(processor->name, "Processor");
+    processor->pid = 1;
+    processor->running = true;
+    processor->sleeping = false;
+    processor->stack_pointer = NULL;
+    processor->next = NULL;
+    
+    // Link the two processes together
+    idle_task->next = processor;
+    processor->next = idle_task;
+    
+    // Store the head of the linked list
+    process_head = idle_task;
 }
 
-// Creates a new process
-int create_process(char *name, int (*entry_point)(void)) {
+// Function to create a new process
+int create_process(const char* name, void(*entry_point)(void)) {
+    // Check if we have reached the maximum number of processes
+    if (process_head->next == NULL) {
+        printf("Maximum number of processes reached!\n");
+        return -1;
+    }
+    
     // Allocate memory for the new process
-    struct process *new_process = malloc(sizeof(struct process));
-    new_process->name = name;
-    new_process->pid = getpid();
-    new_process->state.running = true;
-    new_process->state.sleeping = false;
-    new_process->state.stopped = false;
-
-    // Add the new process to the list of processes
-    new_process->next = process_list;
-    process_list = new_process;
-
-    // Start the new process
-    entry_point();
-
+    process* new_process = malloc(sizeof(process));
+    memset(new_process, 0, sizeof(process));
+    
+    // Copy the name into the new process
+    size_t len = strlen(name);
+    new_process->name = malloc(len + 1);
+    strncpy(new_process->name, name, len);
+    new_process->name[len] = '\0';
+    
+    // Generate a unique ID for the new process
+    static unsigned long id = 2;
+    new_process->pid = id++;
+    
+    // Set the initial values for the new process
+    new_process->running = true;
+    new_process->sleeping = false;
+    new_process->stopped = false;
+    new_process->stack_pointer = NULL;
+    
+    // Insert the new process at the end of the linked list
+    process* curr = process_head;
+    while (curr->next != NULL) {
+        curr = curr->next;
+    }
+    curr->next = new_process;
+    new_process->next = process_head;
+    
+    // Return the ID of the new process
     return new_process->pid;
 }
 
-// Waits for a process to finish
-int wait_for_process(int pid) {
-    // Find the process with the given PID
-    struct process *process = process_list;
-    while (process != NULL && process->pid != pid) {
-        process = process->next;
+// Function to wait for a specific process to complete
+int wait_for_process(unsigned long pid) {
+    // Search for the specified process in the linked list
+    process* proc = process_head;
+    while (proc != NULL && proc->pid != pid) {
+        proc = proc->next;
     }
-
-    // If the process was found, wait for it to finish
-    if (process != NULL) {
-        // Wait for the process to stop
-        while (process->state.running || process->state.sleeping) {
+    
+    // If the process was found, wait for it to complete
+    if (proc != NULL) {
+        // Wait until the process stops running
+        while (proc->running || proc->sleeping) {
             yield();
         }
-
-        // Free the process structure
-        free(process);
-
+        
+        // Free the resources used by the process
+        free(proc->name);
+        free(proc);
+        
         return 0;
     } else {
         // If the process was not found, return an error
@@ -87,61 +112,67 @@ int wait_for_process(int pid) {
     }
 }
 
-// Yields control to the next process
-void yield() {
-    // Find the current process
-    struct process *current_process = process_list;
-
-    // If there are no other processes, just return
-    if (current_process == NULL) {
-        return;
+// Function to terminate a specific process
+int terminate_process(unsigned long pid) {
+    // Search for the specified process in the linked list
+    process* proc = process_head;
+    while (proc != NULL && proc->pid != pid) {
+        proc = proc->next;
     }
-
-    // Find the next process
-    struct process *next_process = current_process->next;
-
-    // Switch to the next process
-    current_process->state.running = false;
-    next_process->state.running = true;
-
-    // Update the current process pointer
-    process_list = next_process;
-}
-
-// Terminates a process
-void terminate_process(int pid) {
-    // Find the process with the given PID
-    struct process *process = process_list;
-    while (process != NULL && process->pid != pid) {
-        process = process->next;
-    }
-
-        // If the process was found, terminate it
-    if (process != NULL) {
-        // Set the process's state to stopped
-        process->state.stopped = true;
-
-        // Free the process structure
-        free(process);
+    
+    // If the process was found, set its status to stopped
+    if (proc != NULL) {
+        proc->stopped = true;
+        return 0;
     } else {
         // If the process was not found, return an error
         return -1;
     }
 }
 
-// The main function
+// Function to yield control back to the operating system
+void yield() {
+    // Get the current process from the linked list
+    process* curr = process_head;
+    
+    // If the current process is still running, move on to the next process
+    if (curr->running) {
+        curr = curr->next;
+    }
+    
+    // Loop through all processes until we find one that is ready to run
+    while (!curr->running && !curr->stopped) {
+        curr = curr->next;
+    }
+    
+    // If we reach the beginning of the linked list again, wrap around to the start
+    if (curr == process_head) {
+        curr = process_head->next;
+    }
+    
+    // Make the selected process the current process
+    process_head = curr;
+}
+
+// Example usage of the functions above
 int main() {
     // Initialize the process manager
     init_process_manager();
-
-    // Create a new process
-    int pid = create_process("My Process", my_entry_point);
-
-    // Wait for the process to finish
-    wait_for_process(pid);
-
-    // Terminate the process
-    terminate_process(pid);
-
+    
+    // Create three new processes
+    int pids[] = {create_process("Process 1", &my_function),
+                  create_process("Process 2", &my_other_function),
+                  create_process("Process 3", &yet_another_function)};
+    
+    // Wait for each process to complete
+    for (size_t i = 0; i < sizeof(pids)/sizeof(pids[0]); ++i) {
+        wait_for_process(pids[i]);
+    }
+    
+    // Terminate the remaining processes
+    for (process* proc = process_head; proc != NULL; proc = proc->next) {
+        terminate_process(proc->pid);
+    }
+    
     return 0;
 }
