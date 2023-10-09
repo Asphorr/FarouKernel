@@ -1,67 +1,62 @@
-#ifndef ARCH_H
-#define ARCH_H
+// arch.hpp - Architectural definitions for the kernel
 
-/* CPU Architecture Specific Definitions */
+#pragma once
 
-/* Instruction Set Architecture (ISA) */
-#define ISA_X86_64 1
+#include <cstdint>
+#include <type_traits>
 
-/* Endianness */
-#define ENDIANNESS_LITTLE 1
+namespace kernel {
 
-/* Word Size */
-#define WORD_SIZE 64
+// CPU architecture specific definitions
+constexpr auto kIsa = Isa::kX86_64;
+constexpr auto kEndianness = Endianness::kLittle;
+constexpr std::size_t kWordSize = sizeof(uint64_t); // 64 bits
 
-/* Address Space Layout */
-#define ASLR 1
+// Address space layout
+constexpr bool kAslr = true;
 
-/* Stack Layout */
-#define STACK_GROWTH_DIRECTION 1
+// Stack layout
+constexpr int kStackGrowthDirection = 1; // Grows upwards
 
-/* Page Table Layout */
-#define PAGE_TABLE_ENTRIES 1024
-#define PAGE_TABLE_SHIFT 12
+// Page table layout
+constexpr std::size_t kPageTableEntries = 1024;
+constexpr std::size_t kPageTableShift = 12;
 
-/* Virtual Memory Layout */
-#define VIRTUAL_MEMORY_START 0x10000000
-#define VIRTUAL_MEMORY_END 0x20000000
+// Virtual memory layout
+constexpr std::size_t kVirtualMemoryStart = 0x10000000;
+constexpr std::size_t kVirtualMemoryEnd = 0x20000000;
 
-/* Interrupt Controller */
-#define INTERRUPT_CONTROLLER_APIC 1
+// Interrupt controller
+constexpr bool kInterruptControllerEnabled = false;
 
-/* Timekeeping */
-#define TIMEKEEPING_FREQUENCY 1000
+// Timekeeping
+constexpr std::size_t kTimekeepingFrequency = 1000;
 
-/* Console Output */
-#define CONSOLE_OUTPUT_BUFFER_SIZE 4096
+// Console output
+constexpr std::size_t kConsoleOutputBufferSize = 4096;
 
-/* Networking */
-#define NETWORKING_ENABLED 1
+// Networking
+constexpr bool kNetworkingEnabled = true;
 
-/* File System */
-#define FILE_SYSTEM_TYPE_FAT32 1
+// File system
+constexpr FileSystemType kFileSystemType = FileSystemType::kFat32;
 
-/* Memory Management */
-#define MEMORY_MANAGEMENT_ENABLED 1
+// Memory management
+constexpr bool kMemoryManagementEnabled = true;
 
-/* Kernel Debugging */
-#define KERNEL_DEBUGGING_ENABLED 0
+// Kernel debugging
+constexpr bool kKernelDebuggingEnabled = false;
 
-/* Platform-Specific Definitions */
-
-/* Define the platform-specific instructions */
-#define PLATFORM_SPECIFIC_INSTRUCTIONS \
-    X86_INSTRUCTION(0x0f, 0xc7, 0xc0) \
-    X86_INSTRUCTION(0x0f, 0xc7, 0xe0) \
-    X86_INSTRUCTION(0x0f, 0xc7, 0xf0)
-
-/* Define the platform-specific data structures */
-typedef struct _platform_specific_data {
+// Platform-specific definitions
+using PlatformSpecificData = struct {
     uint32_t foo;
     uint64_t bar;
-} platform_specific_data;
+};
 
-/* Define the platform-specific functions */
-void platform_specific_function();
+// Platform-specific instructions
+constexpr char kPlatformSpecificInstructions[] = "\x0f\xc7\xc0";
 
-#endif /* ARCH_H */
+// Platform-specific functions
+inline void platform_specific_function() {}
+
+} // namespace kernel
