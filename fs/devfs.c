@@ -13,12 +13,12 @@ static struct kmemleak_notifier devfs_kn = {
     .ctx = NULL,
 };
 
-static int __init devfs_init(void)
+static int devfs_init(void)
 {
     return register_filesystem(&devfs_type);
 }
 
-static void __exit devfs_exit(void)
+static void devfs_exit(void)
 {
     unregister_filesystem(&devfs_type);
 }
@@ -31,7 +31,7 @@ static struct file_operations fops = {
     .open = devfs_open,
     .release = devfs_release,
     .unlocked_ioctl = devfs_ioctl,
-    .compat_ioctl = devfs_ compat_ioctl,
+    .compat_ioctl = devfs_compat_ioctl,
     .mmap = devfs_mmap,
 };
 
@@ -60,7 +60,7 @@ static struct super_block sb = {
 };
 
 static struct dentry *devfs_mount(struct file_system_type *fs_type, int flags,
-    const char *dev_name, void *data)
+                                 const char *dev_name, void *data)
 {
     return mount_nodev(fs_type, flags, &sb, dev_name);
 }
@@ -83,7 +83,7 @@ static int devfs_parse_param(const char *options, struct devfs_params *params)
         if (!*token)
             continue;
 
-        func = (subsys_initcall_t) token;
+        func = (subsys_initcall_t)token;
         ret = func();
         if (ret)
             break;
