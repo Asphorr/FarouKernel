@@ -1,21 +1,16 @@
 #pragma once
 
-#include <cstdint>
+#include <cstddef>
+#include <type_traits>
 
-namespace my {
-    // Alias for unsigned integers
-    template<size_t N>
-    using uinteger = std::uint_fastN_t;
-    
-    // Alias for signed integers
-    template<size_t N>
-    using sinteger = std::int_fastN_t;
-    
-    // Alias for floating point numbers
-    template<typename T>
-    using fpnumber = typename std::conditional<sizeof(T) == sizeof(float), float, double>::type;
-    
-    // Alias for function pointers
-    template<typename R, typename... Args>
-    using fnptr = R(*)(Args...);
-}
+template <std::size_t N>
+using uinteger = std::make_unsigned_t<std::uint_leastN_t>;
+
+template <std::size_t N>
+using sinteger = std::make_signed_t<std::int_leastN_t>;
+
+template <typename T>
+using fpnumber = std::conditional_t<sizeof(T) <= sizeof(float), float, double>;
+
+template <typename R, typename... Args>
+using fnptr = R (*)(Args...);
