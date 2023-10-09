@@ -1,152 +1,101 @@
+#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <asm/bootparam.h>
-#include <asm/elf.h>
-#include <asm/page.h>
+#include <unistd.h>
 
-#define STACK_SIZE 0x1000
-#define HEAP_SIZE 0x1000
+#define KERNEL_BASE_ADDR 0xC0000000
+#define KERNEL_END_ADDR  0xFFFFFFFF
+#define USERSPACE_BASE_ADDR 0x40000000
+#define USERSPACE_END_ADDR  0x7FFFFFFF
 
-// Declare the boot parameters
-struct boot_params {
+typedef struct {
     uint32_t magic;
     uint32_t size;
     uint32_t load_addr;
     uint32_t entry_point;
-};
+} __attribute__((packed)) boot_params_t;
 
-// Load the kernel from disk
-void load_kernel(const char* filename) {
-    // Open the file and read its contents into memory
-    int fd = open(filename, O_RDONLY);
-    char* buffer = mmap(NULL, 0, 0, PROT_READ, MAP_FILE | MAP_PRIVATE, fd, 0);
-    close(fd);
+static inline void *get_boot_param(const char *name) {
+    return (void *)(KERNEL_BASE_ADDR + strlen(name) + 1);
+}
 
-    // Get the ELF header
-    Elf32_Ehdr* ehdr = (Elf32_Ehdr*)buffer;
-
-    // Check the ELF header's magic number
-    if (memcmp(ehdr->e_ident, "\177ELF\177", 4) != 0) {
-        printf("Invalid ELF header\n");
-        exit(-1);
+static int parse_elf64_header(Elf64_Ehdr *ehdr) {
+    if (ehdr->e_ident[EI_CLASS] != ELFCLASS64 || ehdr->e_machine != EM_X86_64) {
+        printf("Invalid ELF file format or architecture\n");
+        return -1;
     }
 
-    // Get the program headers
-    Elf32_Phdr* phdr = (Elf32_Phdr*)((char*)ehdr + ehdr->e_phoff);
-
-    // Loop through the program headers and find the first one with the PT_LOAD flag set
-    for (int i = 0; i < ehdr->e_phnum; i++) {
-        if (phdr[i].p_type == PT_LOAD) {
-            // Calculate the virtual address of the kernel's start address
-            uint32_t va = phdr[i].p_vaddr;
-
-            // Map the kernel into memory at the calculated virtual address
-            mmap((void*)va, phdr[i].p_filesz, PROT_EXEC, MAP_FIXED | MAP_PRIVATE, -1, 0);
-
-            // Update the entry point to point to the kernel's start address
-            struct boot_params params;
-            params.magic = BOOT_MAGIC;
-            params.size = sizeof(params);
-            params.load_addr = va;
-            params.entry_point = phdr[i].p_vaddr;
-
-            // Save the boot parameters to the end of the kernel's data segment
-            mmap((void*)(va + phdr[i].p_filesz), sizeof(params), PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE, -1, 0);
-
-            break;
+    Elf64_Phdr *phdr = (Elf64_Phdr *)((char *)ehdr + ehdr->e_phoff);
+    for (int i = 0; i < ehdr->e_phnum; ++i) {
+        if (phdr[i].p_type == PT_LOAD && phdr[i].p_flags == (PF_R | PF_W | PF_X)) {
+            uintptr_t start = phdr[i].p_vaddr;
+            uintptr_t end = start + phdr[i].p_memsz;
+            if (start >= USERSPACE_BASE_ADDR && end <= USERSPACE_END_ADDR) {
+                continue;
+            } else if (start >= KERNEL_BASE_ADDR && end <= KERNEL_END_ADDR) {
+                continue;
+            }
+            printf("Invalid address range in ELF file\n");
+            return -1;
         }
     }
 
-    // Unmap the ELF header and program headers
-    munmap(buffer, ehdr->e_phoffs);
+    return 0;
 }
 
-// Set up the stack and heap
-void setup_memory() {
-    // Allocate memory for the stack and heap
-    void* stack = malloc(STACK_SIZE);
-    void* heap = malloc(HEAP_SIZE);
+static int map_elf64_file(FILE *fp, const char *filename) {
+    Elf64_Ehdr ehdr;
+    fread(&ehdr, sizeof(Elf64_Ehdr), 1, fp);
+    if (parse_elf64_header(&ehdr) < 0) {
+        return -1;
+    }
 
-    // Set up the stack
-    ((struct boot_params*)stack)->magic = BOOT_MAGIC;
-    ((struct boot_params*)stack)->size = sizeof(struct boot_params);
-    ((struct boot_params*)stack)->load_addr = (uint32_t)stack;
-    ((struct boot_params*)stack)->entry_point = (uint32_t)start_address;
+    Elf64_Phdr *phdr = (Elf64_Phdr *)malloc(sizeof(Elf64_Phdr) * ehdr.e_phnum);
+    if (!phdr) {
+        perror("failed to allocate memory for ELF program headers");
+        return -1;
+    }
+    memcpy(phdr, (char *)&ehdr + ehdr.e_phoff, sizeof(Elf64_Phdr) * ehdr.e_phnum);
 
-    // Set up the heap
-    heap += HEAP_SIZE;
+    for (int i = 0; i < ehdr.e_phnum; ++i) {
+        if (phdr[i].p_type != PT_LOAD) {
+            continue;
+        }
 
-    // Set the current process's stack and heap pointers
-current_process.stack = stack;
-current_process.heap = heap;
+        uintptr_t start = phdr[i].p_vaddr;
+        uintptr_t end = start + phdr[i].p_memsz;
+        if (start >= USERSPACE_BASE_ADDR && end <= USERSPACE_END_ADDR) {
+            continue;
+        } else if (start >= KERNEL_BASE_ADDR && end <= KERNEL_END_ADDR) {
+            continue;
+        }
 
-// Initialize the kernel's memory management functions
-mm_init();
+        void *buf = mmap((void *)start, phdr[i].p_memsz, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE, fileno(fp), phdr[i].p_offset);
+        if (buf == MAP_FAILED) {
+            perror("failed to map ELF file into memory");
+            free(phdr);
+            return -1;
+        }
+    }
 
-// Create a new page directory and set it as the current process's page directory
-pd = pd_create();
-if (!pd) {
-    printk(KERN_ERR "Failed to create page directory\n");
-    while (1);
+    free(phdr);
+    return 0;
 }
-current_process.page_dir = pd;
 
-// Set up the page tables for the kernel's text and data segments
-pt = pt_create(kernel_text_start, kernel_text_end, PAGE_FLAGS_READONLY);
-if (!pt) {
-    printk(KERN_ERR "Failed to create page table for kernel text\n");
-    while (1);
-}
-pt_set(pd, KERNEL_TEXT_START, pt);
+int main(int argc, char **argv) {
+    FILE *fp = fopen(argv[1], "rb");
+    if (!fp) {
+        perror("failed to open input file");
+        return 1;
+    }
 
-pt = pt_create(kernel_data_start, kernel_data_end, PAGE_FLAGS_READWRITE);
-if (!pt) {
-    printk(KERN_ERR "Failed to create page table for kernel data\n");
-    while (1);
-}
-pt_set(pd, KERNEL_DATA_START, pt);
+    if (map_elf64_file(fp, argv[1]) < 0) {
+        fclose(fp);
+        return 1;
+    }
 
-// Set up the page tables for the kernel's stack and heap
-pt = pt_create(stack, stack + STACK_SIZE, PAGE_FLAGS_READWRITE);
-if (!pt) {
-    printk(KERN_ERR "Failed to create page table for kernel stack\n");
-    while (1);
-}
-pt_set(pd, STACK_START, pt);
-
-pt = pt_create(heap, heap + HEAP_SIZE, PAGE_FLAGS_READWRITE);
-if (!pt) {
-    printk(KERN_ERR "Failed to create page table for kernel heap\n");
-    while (1);
-}
-pt_set(pd, HEAP_START, pt);
-
-// Enable paging and set the page fault handler
-page_fault_handler = kmem_alloc(sizeof(page_fault_handler_t));
-if (!page_fault_handler) {
-    printk(KERN_ERR "Failed to allocate memory for page fault handler\n");
-    while (1);
-}
-page_fault_handler->handler = &page_fault_handler_function;
-page_fault_handler->next = NULL;
-
-set_intr_gate(PAGE_FAULT_VECTOR, page_fault_handler);
-enable_paging();
-
-// Start the kernel
-printk(KERN_INFO "Starting kernel...\n");
-
-while (1) {
-    // Handle interrupts
-    intr_handle();
-
-    // Run the next process
-    run_next_process();
+    fclose(fp);
+    return 0;
 }
