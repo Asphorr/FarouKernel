@@ -1,54 +1,39 @@
-Kernel Panic:
-PID: 12345
-Task: my_process
+\// Kernel Panic:
+// PID: 12345
+// Task: my_process
 
-Stack Trace:
-0xdeadbeef - kernel_function
-0x00000001 - user_function
+// Stack Trace:
+// 0xdeadbeef - kernel_function
+// 0x00000001 - user_function
 
-Registers:
-RAX: 0x12345678
-RBX: 0x23456789
-RCX: 0x3456789a
-RDX: 0x456789ab
-RSP: 0x56789abc
-RBP: 0x6789defg
-RIP: 0x789defgh
+// Registers:
+// RAX: 0x12345678
+// RBX: 0x23456789
+// RCX: 0x3456789a
+// RDX: 0x456789ab
+// RSP: 0x56789abc
+// RBP: 0x6789defg
+// RIP: 0x789defgh
 
-Memory State:
-Total Memory: 1048576 bytes
-Used Memory: 524288 bytes
-Free Memory: 524288 bytes
+// Open Files:
+// /dev/null (fd 0)
+// /dev/tty (fd 1)
+// /dev/random (fd 2)
 
-Open Files:
+// Last System Call:
+// sys_open(path="/etc/passwd", flags=O_RDONLY)
 
-/dev/null (fd 0)
-/dev/tty (fd 1)
-/dev/random (fd 2)
-System Call Stack Trace:
+// System Call Stack Trace:
+// sys_read(fd=3, buf=0x7ffd40e40000, count=1024)
+// sys_write(fd=1, buf=0x7ffd40e40000, count=1024)
+// sys_open(path="/etc/passwd", flags=O_RDONLY)
 
-sys_read(fd=3, buf=0x7ffd40e40000, count=1024)
-sys_write(fd=1, buf=0x7ffd40e40000, count=1024)
-sys_open(path="/etc/passwd", flags=O_RDONLY)
-Last System Call:
+// Operating System:
+// Kernel Version: 5.12.1
+// Kernel Release: 1234567890
+// Kernel Build Time: 2023-02-17 15:30:00
 
-sys_open(path="/etc/passwd", flags=O_RDONLY)
-Hardware State:
-
-CPU: Intel Core i7-1234
-Motherboard: ASUS P5Q-E
-Memory: 16 GB DDR3
-Storage: 500 GB SSD
-Operating System:
-
-Kernel Version: 5.12.1
-Kernel Release: 1234567890
-Kernel Build Time: 2023-02-17 15:30:00
-User Space Programs:
-
-/bin/bash
-/usr/bin/python3
-/usr/bin/firefox
-Lorem Ipsum Text:
-
-"Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."ine to the kernel command line options to include the Lorem Ipsum text in the panic file:
+// User Space Programs:
+// /bin/bash
+// /usr/bin/python3
+// /usr/bin/firefox
