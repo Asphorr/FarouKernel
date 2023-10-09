@@ -1,17 +1,18 @@
 #include <iostream>
-using namespace std;
+#include <string>
 
 int main() {
-    cout << "Hello, world!" << endl;
+    constexpr auto helloWorld = "Hello, world!";
+    std::cout << helloWorld << '\n';
 
-    char ch;
-    cin >> ch;
+    char ch{};
+    std::cin >> ch;
 
-    string str;
-    getline(cin, str);
+    std::string str;
+    std::getline(std::cin, str);
 
-    cout << "Read character: " << ch << endl;
-    cout << "Read string: " << str << endl;
+    std::cout << "Read character: " << ch << "\n";
+    std::cout << "Read string: " << str << "\n";
 
     return 0;
 }
