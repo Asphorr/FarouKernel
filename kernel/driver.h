@@ -1,75 +1,69 @@
-#ifndef DRIVER_H
-#define DRIVER_H
+#pragma once
 
-#include <stdbool.h>
-#include <stdint.h>
-#include "process.h"
+class Driver {
+public:
+    std::string name;
+    std::function<void()> entryPoint;
+    std::atomic<bool> initialized{false};
+    std::atomic<uint8_t> status{0x00};
 
-// Structure to represent a driver
-typedef struct {
-    const char* name;               // Name of the driver
-    void (*entry_point)(void);      // Entry point of the driver
-    volatile bool initialized;      // Whether the driver has been initialized
-    volatile uint8_t status;        // Status of the driver (0x00=unloaded, 0x01=loading, 0x02=loaded, 0x03=unloading)
-} driver_t;
-
-// Functions to manipulate drivers
-static inline void driver_init(driver_t* drv) {
-    drv->initialized = true;
-    drv->status = 0x01;
-}
-
-static inline void driver_load(driver_t* drv) {
-    if (drv->initialized && drv->status == 0x01) {
-        drv->status = 0x02;
-        drv->entry_point();
+    static void init(Driver& drv) {
+        drv.initialized = true;
+        drv.status = 0x01;
     }
-}
 
-static inline void driver_unload(driver_t* drv) {
-    if (drv->initialized && drv->status != 0x03) {
-        drv->status = 0x03;
+    static void load(Driver& drv) {
+        if (!drv.initialized || drv.status != 0x01) {
+            throw std::runtime_error("Cannot load driver");
+        }
+        drv.status = 0x02;
+        drv.entryPoint();
     }
-}
 
-// Functions to interact with the driver
-static inline void driver_send_command(driver_t* drv, uint8_t command) {
-    if (drv->initialized && drv->status == 0x02) {
+    static void unload(Driver& drv) {
+        if (!drv.initialized || drv.status == 0x03) {
+            throw std::runtime_error("Cannot unload driver");
+        }
+        drv.status = 0x03;
+    }
+
+    template <typename T>
+    static void sendCommand(Driver& drv, T command) {
+        if (!drv.initialized || drv.status != 0x02) {
+            throw std::runtime_error("Cannot send command to driver");
+        }
         // Send command to driver
     }
-}
 
-static inline uint8_t driver_receive_data(driver_t* drv) {
-    if (drv->initialized && drv->status == 0x02) {
+    template <typename T>
+    static T receiveData(Driver& drv) {
+        if (!drv.initialized || drv.status != 0x02) {
+            throw std::runtime_error("Cannot receive data from driver");
+        }
         // Receive data from driver
-        return 0;
-    } else {
-        return -1;
+        return {};
     }
-}
+};
 
-// Macro to simplify driver initialization
 #define DriverInit(drv) \
     do { \
-        drv->initialized = true; \
-        drv->status = 0x01; \
+        drv.initialized = true; \
+        drv.status = 0x01; \
     } while (0)
 
-// Macro to simplify driver loading
 #define DriverLoad(drv) \
     do { \
-        if (drv->initialized && drv->status == 0x01) { \
-            drv->status = 0x02; \
-            drv->entry_point(); \
+        if (!drv.initialized || drv.status != 0x01) { \
+            throw std::runtime_error("Cannot load driver"); \
         } \
+        drv.status = 0x02; \
+        drv.entryPoint(); \
     } while (0)
 
-// Macro to simplify driver unloading
 #define DriverUnload(drv) \
     do { \
-        if (drv->initialized && drv->status != 0x03) { \
-            drv->status = 0x03; \
+        if (!drv.initialized || drv.status == 0x03) { \
+            throw std::runtime_error("Cannot unload driver"); \
         } \
+        drv.status = 0x03; \
     } while (0)
-
-#endif // DRIVER_H
