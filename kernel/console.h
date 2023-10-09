@@ -1,13 +1,17 @@
-#ifndef __CONSOLE_H__
-#define __CONSOLE_H__
+#include <iostream>
+using namespace std;
 
-#include "types.h"
+int main() {
+    cout << "Hello, world!" << endl;
 
-/* Console I/O functions */
-void con_init(void);
-void con_putc(char c);
-void con_getc(char *buf);
-void con_gets(char *buf, size_t len);
-void con_printf(const char *fmt, ...);
+    char ch;
+    cin >> ch;
 
-#endif /* __CONSOLE_H__ */
+    string str;
+    getline(cin, str);
+
+    cout << "Read character: " << ch << endl;
+    cout << "Read string: " << str << endl;
+
+    return 0;
+}
