@@ -5,12 +5,10 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 
-// Define constants
 #define MAX_ARGS 64
-#define BUFFER_SIZE 1024
 
 // Function prototypes
-void parseCommandLineArguments(char** args, int maxArgs);
+void parseCommandLineArguments(char** args, int* argc);
 void initializeSyscallTable();
 void setUpProgramEnvironment();
 void startProgram(int argc, char** args);
@@ -19,11 +17,15 @@ void cleanupAndExit();
 
 int main(void) {
     // Allocate memory for command line arguments
-    char** args = (char**)malloc(MAX_ARGS * sizeof(char*));
-    memset(args, 0, MAX_ARGS * sizeof(char*));
+    char** args = calloc(MAX_ARGS + 1, sizeof(char*));
+    if (!args) {
+        fprintf(stderr, "Error: Failed to allocate memory for command line arguments\n");
+        return EXIT_FAILURE;
+    }
 
     // Parse command line arguments
-    int argc = parseCommandLineArguments(args, MAX_ARGS);
+    int argc = 0;
+    parseCommandLineArguments(args, &argc);
 
     // Initialize the system call table
     initializeSyscallTable();
@@ -40,15 +42,16 @@ int main(void) {
     // Clean up and exit
     cleanupAndExit();
 
-    return 0;
+    return EXIT_SUCCESS;
 }
 
-void parseCommandLineArguments(char** args, int maxArgs) {
+void parseCommandLineArguments(char** args, int* argc) {
     // Parse the command line arguments
-    int i = 0;
-    char buffer[BUFFER_SIZE];
-    while (i < maxArgs && fgets(buffer, BUFFER_SIZE, stdin)) {
-        args[i++] = strdup(buffer);
+    const char* delimiters = " \t";
+    char* token = strtok(NULL, delimiters);
+    while (token && *argc < MAX_ARGS) {
+        args[(*argc)++] = token;
+        token = strtok(NULL, delimiters);
     }
 }
 
@@ -74,6 +77,6 @@ void waitForProgramToFinish() {
 
 void cleanupAndExit() {
     // Clean up and exit
-    free((void*)args);
+    free(args);
     exit(EXIT_SUCCESS);
 }
