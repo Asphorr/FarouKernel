@@ -11,35 +11,35 @@
 #include <utime.h>
 
 // Directory entry structure
-struct dirent {
-    ino_t d_ino;     /* Inode number */
-    off_t d_off;   /* Offset to the start of the file */
-    uint16_t d_reclen;  /* Length of this directory entry */
-    uint8_t d_type;  /* Type of file (see below) */
-    char d_name[256];  /* Name of the file */
-};
+typedef struct dirent {
+ino_t d_ino; // Inode number
+off_t d_off; // Offset to the start of the file
+uint16_t d_reclen; // Length of this directory entry
+uint8_t d_type; // Type of file (see below)
+char d_name[256]; // Name of the file
+} DirEntry;
 
 // Types of files that can be stored in a directory
-enum {
-    DT_REG = 1,  // Regular file
-    DT_DIR = 2,  // Directory
-    DT_LNK = 3,  // Symbolic link
-    DT_BLK = 4,  // Block device
-    DT_CHR = 5,  // Character device
-    DT_FIFO = 6,  // FIFO (named pipe)
-    DT_SOCK = 7,  // Socket
+enum FileType {
+REGULAR = 1, // Regular file
+DIRECTORY = 2, // Directory
+SYMLINK = 3, // Symbolic link
+BLOCKDEV = 4, // Block device
+CHARDEV = 5, // Character device
+FIFOPipe = 6, // FIFO (named pipe)
+SOCKET = 7, // Socket
 };
 
 // Function prototypes
-void dir_init(void);
-void dir_exit(void);
-int dir_opendir(const char *path, int flags);
-int dir_closedir(int dirp);
-struct dirent *dir_readdir(int dirp);
-int dir_seekdir(int dirp, off_t offset);
-int dir_telldir(int dirp);
-int dir_mkdir(const char *path, mode_t mode);
-int dir_rmdir(const char *path);
-int dir_rename(const char *oldpath, const char *newpath);
+void initDir();
+void exitDir();
+int openDir(const char *path, int flags);
+int closeDir(int dirp);
+DirEntry *readDir(int dirp);
+int seekDir(int dirp, off_t offset);
+int tellDir(int dirp);
+int makeDir(const char *path, mode_t mode);
+int removeDir(const char *path);
+int renameFile(const char *oldPath, const char *newPath);
 
-#endif  // _DIR_H
+#endif // _DIR_H
