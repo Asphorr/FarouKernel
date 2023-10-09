@@ -1,5 +1,3 @@
-// arch.hpp - Architectural definitions for the kernel
-
 #pragma once
 
 #include <cstdint>
@@ -7,56 +5,73 @@
 
 namespace kernel {
 
-// CPU architecture specific definitions
-constexpr auto kIsa = Isa::kX86_64;
-constexpr auto kEndianness = Endianness::kLittle;
-constexpr std::size_t kWordSize = sizeof(uint64_t); // 64 bits
+enum class Isa : uint8_t { X86_64 };
+enum class Endianness : uint8_t { Little };
 
-// Address space layout
-constexpr bool kAslr = true;
+struct ArchitectureDefinitions {
+    static constexpr Isaa kIsa = Isa::X86_64;
+    static constexpr Endianness kEndianness = Endianness::Little;
+    static constexpr size_t kWordSize = sizeof(uint64_t);
+};
 
-// Stack layout
-constexpr int kStackGrowthDirection = 1; // Grows upwards
+struct AddressSpaceLayout {
+    static constexpr bool kAslr = true;
+};
 
-// Page table layout
-constexpr std::size_t kPageTableEntries = 1024;
-constexpr std::size_t kPageTableShift = 12;
+struct StackLayout {
+    static constexpr int kStackGrowthDirection = 1;
+};
 
-// Virtual memory layout
-constexpr std::size_t kVirtualMemoryStart = 0x10000000;
-constexpr std::size_t kVirtualMemoryEnd = 0x20000000;
+struct PageTableLayout {
+    static constexpr size_t kPageTableEntries = 1024;
+    static constexpr size_t kPageTableShift = 12;
+};
 
-// Interrupt controller
-constexpr bool kInterruptControllerEnabled = false;
+struct VirtualMemoryLayout {
+    static constexpr size_t kVirtualMemoryStart = 0x10000000;
+    static constexpr size_t kVirtualMemoryEnd = 0x20000000;
+};
 
-// Timekeeping
-constexpr std::size_t kTimekeepingFrequency = 1000;
+struct InterruptController {
+    static constexpr bool kInterruptControllerEnabled = false;
+};
 
-// Console output
-constexpr std::size_t kConsoleOutputBufferSize = 4096;
+struct Timekeeping {
+    static constexpr size_t kTimekeepingFrequency = 1000;
+};
 
-// Networking
-constexpr bool kNetworkingEnabled = true;
+struct ConsoleOutput {
+    static constexpr size_t kConsoleOutputBufferSize = 4096;
+};
 
-// File system
-constexpr FileSystemType kFileSystemType = FileSystemType::kFat32;
+struct Networking {
+    static constexpr bool kNetworkingEnabled = true;
+};
 
-// Memory management
-constexpr bool kMemoryManagementEnabled = true;
+struct FileSystem {
+    enum class Type : uint8_t { FAT32 };
+    static constexpr Type kFileSystemType = Type::FAT32;
+};
 
-// Kernel debugging
-constexpr bool kKernelDebuggingEnabled = false;
+struct MemoryManagement {
+    static constexpr bool kMemoryManagementEnabled = true;
+};
 
-// Platform-specific definitions
-using PlatformSpecificData = struct {
+struct KernelDebugging {
+    static constexpr bool kKernelDebuggingEnabled = false;
+};
+
+struct PlatformSpecificData {
     uint32_t foo;
     uint64_t bar;
 };
 
-// Platform-specific instructions
-constexpr char kPlatformSpecificInstructions[] = "\x0f\xc7\xc0";
+struct PlatformSpecificInstructions {
+    static constexpr char kPlatformSpecificInstructions[] = "\x0f\xc7\xc0";
+};
 
-// Platform-specific functions
-inline void platform_specific_function() {}
+struct PlatformSpecificFunctions {
+    inline void platform_specific_function();
+};
 
 } // namespace kernel
