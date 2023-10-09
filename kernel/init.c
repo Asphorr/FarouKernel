@@ -1,58 +1,75 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
+#include <iostream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <functional>
+#include <memory>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <future>
+#include <chrono>
+#include <exception>
 
-#define MAX_ARGS 64
-
-static void parse_command_line(char ***args, int *argc, int max_args);
-static void setup_program_environment(void);
-static void start_program(int argc, char **args);
-static void wait_for_program_to_finish(void);
-static void cleanup_and_exit(void);
-
-int main(void) {
-    char **args = calloc(MAX_ARGS, sizeof(*args));
-    int argc = 0;
-
-    parse_command_line(&args, &argc, MAX_ARGS);
-    setup_program_environment();
-    start_program(argc, args);
-    wait_for_program_to_finish();
-    cleanup_and_exit();
-
-    free(args);
-    return EXIT_SUCCESS;
-}
-
-static void parse_command_line(char ***args, int *argc, int max_args) {
-    char *token = NULL;
-    int i = 0;
-
-    while (i < max_args && token != NULL) {
-        token = strtok(NULL, " \t");
-        if (token != NULL) {
-            (*args)[i++] = token;
+class ProgramRunner {
+public:
+    explicit ProgramRunner(const std::vector<std::string>& arguments): _arguments{arguments}, _running{false} {}
+    
+    ~ProgramRunner() {
+        stop();
+    }
+    
+    bool run() {
+        try {
+            auto future = std::async(std::launch::async, [this]{
+                _running = true;
+                
+                // Set up the program environment
+                setupEnvironment();
+                
+                // Start the program
+                startProgram(_arguments);
+                
+                // Wait for the program to finish
+                waitForProgramToFinish();
+                
+                // Clean up and exit
+                cleanUpAndExit();
+            });
+            
+            return future.valid();
+        } catch (...) {
+            return false;
         }
     }
+    
+    void stop() {
+        if (_running) {
+            _running = false;
+            _cv.notify_all();
+        }
+    }
+private:
+    const std::vector<std::string> _arguments;
+    volatile bool _running;
+    std::mutex _mtx;
+    std::condition_variable _cv;
+};
 
-    *argc = i;
-}
-
-static void setup_program_environment(void) {
-    /* set up the program environment */
-}
-
-static void start_program(int argc, char **args) {
-    /* start the program */
-}
-
-static void wait_for_program_to_finish(void) {
-    /* wait for the program to finish */
-}
-
-static void cleanup_and_exit(void) {
-    /* clean up and exit */
+int main() {
+    std::cout << "Enter command line arguments separated by spaces:" << std::endl;
+    std::vector<std::string> arguments;
+    std::copy(std::istream_iterator<std::string>(std::cin), std::istream_iterator<std::string>(), std::back_inserter(arguments));
+    
+    ProgramRunner runner(arguments);
+    if (!runner.run()) {
+        std::cerr << "Failed to start program" << std::endl;
+        return EXIT_FAILURE;
+    }
+    
+    std::cout << "Press enter to stop the program..." << std::endl;
+    getchar();
+    
+    runner.stop();
+    return EXIT_SUCCESS;
 }
