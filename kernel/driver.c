@@ -10,27 +10,37 @@ struct IDriver {
 };
 
 // Implement the driver for your device
-class MyDevice : public IDriver {
+class MyDevice final : public IDriver {
 public:
-    MyDevice(const std::string& name) : name_(name) {}
+    explicit MyDevice(const std::string& name) : name_{name} {}
 
     void load() override {
+        if (!isLoaded()) {
+            throw std::runtime_error{"Driver not loaded"};
+        }
         // Perform any necessary initialization steps here
         // ...
     }
 
     void unload() override {
+        if (isLoaded()) {
+            throw std::runtime_error{"Driver already unloaded"};
+        }
         // Perform any necessary cleanup steps here
         // ...
     }
 
 private:
+    bool isLoaded() const noexcept {
+        return true;
+    }
+
     const std::string name_;
 };
 
 // Create a factory method to create instances of the driver
 template<typename T>
-std::unique_ptr<T> make_driver(const std::string& name) {
+[[nodiscard]] auto make_driver(const std::string& name) -> std::unique_ptr<T> {
     return std::make_unique<MyDevice>(name);
 }
 
