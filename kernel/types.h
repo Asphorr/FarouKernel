@@ -1,18 +1,23 @@
-// #pragma once
-
 #include <concepts>
-#include <functional>
-#include <numeric>
+#include <numbers>
 #include <utility>
 
-template <auto N>
-using uinteger = std::make_unsigned_t<std::uint_fastN_t>;
+template <std::integral T>
+using uinteger = std::make_unsigned_t<T>;
 
-template <auto N>
-using sinteger = std::make_signed_t<std::int_fastN_t>;
-
-template <typename T>
+template <std::floating_point T>
 using fpnumber = std::conditional_t<sizeof(T) <= sizeof(float), float, double>;
 
-template <typename R, typename... Args>
-using fnptr = std::add_pointer_t<R(Args...)>;
+int main() {
+    constexpr int x = 10;
+    constexpr int y = -5;
+    constexpr double z = 0.0;
+
+    static_assert(std::is_same_v<decltype(x), uinteger<int>>);
+    static_assert(std::is_same_v<decltype(y), uinteger<int>>);
+    static_assert(std::is_same_v<decltype(z), fpnumber<double>>);
+
+    std::cout << "x = " << x << ", y = " << y << ", z = " << z << '\n';
+
+    return 0;
+}
