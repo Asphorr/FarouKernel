@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Set the project name
 PROJECT_NAME="funicod"
@@ -28,16 +28,16 @@ LIBS="-lpthread -lrt -lm"
 SOURCES=(main.c utils.c)
 
 # Set the object files
-OBJECTS=(${SOURCES[@]/%/.o})
+OBJECTS=("${SOURCES[@]%.*}".o)
 
 # Build the objects
-$CC $CFLAGS ${SOURCES[*]} -o ${OBJECTS[*]}
+$CC $CFLAGS "${SOURCES[@]}" -o "${OBJECTS[@]}"
 
 # Build the executables
-$CXX $CXXFLAGS main.cpp utils.cpp -o $PROJECT_NAME
+$CXX $CXXFLAGS "main.cpp" "utils.cpp" -o "$PROJECT_NAME"
 
 # Link the objects
-$LD $OBJECTS $LIBS -o $PROJECT_NAME
+$LD "${OBJECTS[@]}" $LIBS -o "$PROJECT_NAME"
 
 # Run the executable
-./$PROJECT_NAME
+./"$PROJECT_NAME"
