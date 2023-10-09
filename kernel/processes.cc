@@ -1,54 +1,64 @@
+#include <cassert>
+#include <compare>
+#include <concepts>
+#include <format>
 #include <iostream>
-#include <memory>
-#include <utility>
-#include <algorithm>
-#include <iterator>
-#include <functional>
+#include <ranges>
+#include <span>
+#include <type_traits>
+#include <variant>
 
+// A simple class representing a process
 class Process {
-public:
-    explicit Process(int id): _id{id}, _state{"running"} {}
+ public:
+ // Constructor taking an ID and initializing the state to "running"
+ explicit Process(int id) : id_(id), state_{"running"} {}
 
-    [[nodiscard]] int id() const noexcept { return _id; }
-    [[nodiscard]] const char* state() const noexcept { return _state; }
+ // Getters for the ID and state members
+ [[nodiscard]] int id() const noexcept { return id_; }
+ [[nodiscard]] std::string_view state() const noexcept { return state_; }
 
-private:
-    int _id;
-    const char* _state;
+ private:
+ int id_;
+ std::string state_;
 };
 
+// Define a type alias for a unique pointer to a Process object
 using ProcessPtr = std::unique_ptr<Process>;
 
+// Define a comparison function object for sorting Process objects by their IDs
 struct CompareProcessId {
-    bool operator()(const ProcessPtr& p1, const ProcessPtr& p2) const {
-        return p1->id() > p2->id();
-    }
+ bool operator()(const ProcessPtr& lhs, const ProcessPtr& rhs) const {
+    return lhs->id() > rhs->id();
+ }
 };
 
-template <typename T>
-using Vector = std::vector<T, std::allocator<T>>;
-
-Vector<ProcessPtr> sortAndFilterProcesses(Vector<ProcessPtr>& processes) {
-    Vector<ProcessPtr> sortedProcesses;
-    std::sort(processes.begin(), processes.end(), CompareProcessId());
-    std::copy_if(processes.begin(), processes.end(), std::back_inserter(sortedProcesses),
-                 [] (auto&& process) { return process->state() != "zombie"; });
-    return sortedProcesses;
+// Define a function template for filtering out zombie processes from a vector of ProcessPtr objects
+template <typename Range>
+requires std::ranges::range<Range> && std::same_as<std::remove_cvref_t<decltype(*std::begin(std::declval<Range>()))>, ProcessPtr>
+[[nodiscard]] auto filterZombies(Range&& processes) -> decltype(std::forward<Range>(processes) | std::views::filter([](const ProcessPtr& process){return process->state() != "zombie";})) {
+ return std::forward<Range>(processes) | std::views::filter([](const ProcessPtr& process){return process->state() != "zombie";});
 }
 
 int main() {
-    Vector<ProcessPtr> processes;
-    processes.emplace_back(new Process(1));
-    processes.emplace_back(new Process(2));
-    processes.emplace_back(new Process(3));
-    processes.emplace_back(new Process(4));
-    processes.emplace_back(new Process(5));
+ // Create a vector of ProcessPtr objects
+ std::vector<ProcessPtr> processes;
+ processes.push_back(std::make_unique<Process>(1));
+ processes.push_back(std::make_unique<Process>(2));
+ processes.push_back(std::make_unique<Process>(3));
+ processes.push_back(std::make_unique<Process>(4));
+ processes.push_back(std::make_unique<Process>(5));
 
-    auto sortedProcesses = sortAndFilterProcesses(processes);
+ // Sort the vector of ProcessPtr objects by their IDs
+ std::ranges::sort(processes, CompareProcessId());
 
-    for (const auto& process : sortedProcesses) {
-        std::cout << process->id() << ": " << process->state() << '\n';
-    }
+ // Filter out any zombie processes from the vector
+ auto filteredProcesses = filterZombies(processes);
 
-    return 0;
+ // Print the remaining non-zombie processes
+ for (const auto& process : filteredProcesses) {
+    std::cout << process->id() << ": " << process->state() << "\n";
+ }
+
+ return 0;
 }
