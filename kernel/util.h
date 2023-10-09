@@ -1,18 +1,90 @@
-#ifndef UTIL_H
-#define UTIL_H
+#pragma once
 
-// Function declarations
-void* malloc_or_die(size_t size);
-void free_or_die(void* ptr);
-void print_error_and_exit(const char* message);
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
 
-// Additional utility functions
-char* strdup_or_die(const char* string);
-void* realloc_or_die(void* ptr, size_t size);
-void memcpy_or_die(void* dest, void* src, size_t n);
-void memmove_or_die(void* dest, void* src, size_t n);
-void memset_or_die(void* ptr, int value, size_t n);
-void bzero_or_die(void* ptr, size_t n);
-void qsort_or_die(void* base, size_t num, size_t size, int (*compar)(const void*, const void*));
+#define MALLOC_OR_DIE(size) \
+    ({ \
+        void *ptr = malloc((size)); \
+        if (!ptr) { \
+            perror("malloc failed"); \
+            abort(); \
+        } \
+        ptr; \
+    })
 
-#endif /* UTIL_H */
+#define FREE_OR_DIE(ptr) \
+    do { \
+        if ((ptr)) { \
+            free((ptr)); \
+            (ptr) = NULL; \
+        } \
+    } while (0)
+
+#define PRINT_ERROR_AND_EXIT(message) \
+    do { \
+        fputs((message), stderr); \
+        exit(1); \
+    } while (0)
+
+#define STRDUP_OR_DIE(str) \
+    ({ \
+        char *copy = strdup((str)); \
+        if (!copy) { \
+            perror("strdup failed"); \
+            abort(); \
+        } \
+        copy; \
+    })
+
+#define REALLOC_OR_DIE(ptr, size) \
+    ({ \
+        void *new_ptr = realloc((ptr), (size)); \
+        if (!new_ptr && !(ptr)) { \
+            perror("realloc failed"); \
+            abort(); \
+        } \
+        new_ptr; \
+    })
+
+#define MEMCMPY_OR_DIE(dest, src, n) \
+    do { \
+        if (memcmp((src), (dest), (n))) { \
+            perror("memcpy failed"); \
+            abort(); \
+        } \
+    } while (0)
+
+#define MEMMOVE_OR_DIE(dest, src, n) \
+    do { \
+        if (memmove((src), (dest), (n))) { \
+            perror("memmove failed"); \
+            abort(); \
+        } \
+    } while (0)
+
+#define MEMSET_OR_DIE(ptr, val, n) \
+    do { \
+        if (memset((ptr), (val), (n))) { \
+            perror("memset failed"); \
+            abort(); \
+        } \
+    } while (0)
+
+#define BZERO_OR_DIE(ptr, n) \
+    do { \
+        if (bzero((ptr), (n))) { \
+            perror("bzero failed"); \
+            abort(); \
+        } \
+    } while (0)
+
+#define QSORT_OR_DIE(base, num, size, compar) \
+    do { \
+        if (qsort((base), (num), (size), (compar))) { \
+            perror("qsort failed"); \
+            abort(); \
+        } \
+    } while (0)
