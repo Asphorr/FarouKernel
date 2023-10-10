@@ -1,261 +1,78 @@
-#include <iostream>
-#include <memory>
-#include <utility>
-#include <type_traits>
-#include <stdexcept>
-#include <algorithm>
-#include <iterator>
-#include <unordered_map>
+#include <concepts>
 #include <functional>
+#include <map>
+#include <stdexcept>
+#include <utility>
 
 template <typename T>
-using unique_ptr = std::unique_ptr<T>;
-
-template <typename T>
-using shared_ptr = std::shared_ptr<T>;
-
-template <typename T>
-using weak_ptr = std::weak_ptr<T>;
-
-template <typename T>
-using enable_if = typename std::enable_if<T>::type;
-
-template <typename T>
-using disable_if = typename std::disable_if<T>::type;
-
-template <typename T>
-using remove_reference = typename std::remove_reference<T>::type;
-
-template <typename T>
-using decay = typename std::decay<T>::type;
-
-template <typename... Args>
-struct overload : public Args... {};
-
-template <typename... Args>
-overload(Args...) -> overload<Args...>;
-
-template <typename T>
-concept bool IsUniquePtr = requires(T t) {
-    { t.get() };
-    { *t };
-    { t->operator*() };
+concept Executor = requires(T executor) {
+    // Check that the executor has a member function named 'execute' that takes a single argument of type 'CommandParser::ParsedCommand'.
+    executor.execute({});
 };
 
 template <typename T>
-concept bool IsSharedPtr = requires(T t) {
-    { t.use_count() };
-    { *t };
-    { t->operator*() };
+concept Parser = requires(T parser) {
+    // Check that the parser has a member function named 'parse' that returns a value of type 'CommandParser::ParsedCommand'.
+    parser.parse("");
 };
 
-template <typename T>
-concept bool IsWeakPtr = requires(T t) {
-    { t.lock().get() };
-    { *t };
-    { t->operator*() };
+struct CommandExecutor {
+    template <typename FuncType>
+    void registerCommand(const std::string& name, FuncType&& func) {
+        commands_.emplace(name, std::forward<FuncType>(func));
+    }
+
+    void execute(const CommandParser::ParsedCommand& command) {
+        try {
+            auto it = commands_.find(command.name());
+            if (it == commands_.end()) {
+                throw std::out_of_range("Unknown command.");
+            }
+            it->second(command.arguments());
+        } catch (const std::exception& e) {
+            std::cerr << "Error executing command '" << command.name() << "': " << e.what() << '\n';
+        }
+    }
+
+private:
+    std::map<std::string, std::function<void(const std::vector<std::string>&)>> commands_;
 };
 
-template <typename T>
-concept bool IsSmartPointer = IsUniquePtr<T> || IsSharedPtr<T> || IsWeakPtr<T>;
+struct CommandParser {
+    struct ParsedCommand {
+        std::string name;
+        std::vector<std::string> arguments;
+    };
 
-template <typename T>
-concept bool IsIterator = requires(T t) {
-    { ++t };
-    { *t };
-    { t->operator*() };
+    ParsedCommand parse(const std::string& input) {
+        // Parse the input string and extract the command name and arguments.
+        // ...
+        return {};
+    }
 };
 
-template <typename T>
-concept bool IsRange = requires(T t) {
-    { begin(t) };
-    { end(t) };
-    { distance(begin(t), end(t)) };
-};
+int main() {
+    CommandExecutor executor;
+    CommandParser parser;
 
-template <typename T>
-concept bool IsContainer = requires(T t) {
-    { size(t) };
-    { empty(t) };
-    { front(t) };
-    { back(t) };
-    { push_back(t) };
-    { pop_back(t) };
-    { emplace_back(t) };
-    { erase(t) };
-    { swap(t) };
-};
+    // Register some commands with the executor.
+    executor.registerCommand("hello", [](){ std::cout << "Hello, world!\n"; });
+    executor.registerCommand("add", [](auto x, auto y){ std::cout << x + y << '\n'; });
 
-template <typename T>
-concept bool IsMap = requires(T t) {
-    { t.size() };
-    { t.empty() };
-    { t.clear() };
-    { t.insert() };
-    { t.erase() };
-    { t.at() };
-    { t.find() };
-    { t.lower_bound() };
-    { t.upper_bound() };
-    { t.equal_range() };
-};
+    // Read user input and pass it to the parser.
+    while (true) {
+        std::string input;
+        std::getline(std::cin, input);
+        if (!input.empty()) {
+            break;
+        }
+        try {
+            auto parsedCommand = parser.parse(input);
+            executor.execute(parsedCommand);
+        } catch (const std::exception& e) {
+            std::cerr << "Invalid command.\n";
+        }
+    }
 
-template <typename T>
-concept bool IsFunction = requires(T t) {
-    { t() };
-};
-
-template <typename T>
-concept bool IsCallable = IsFunction<T> || IsLambda<T>;
-
-template <typename T>
-concept bool IsLambda = requires(T t) {
-    { t() };
-};
-
-template <typename T>
-concept bool IsTuple = requires(T t) {
-    { tuple_size<T>() };
-    { get<0>(t) };
-    { get<1>(t) };
-    { get<2>(t) };
-    { get<3>(t) };
-    { get<4>(t) };
-    { get<5>(t) };
-    { get<6>(t) };
-    { get<7>(t) };
-    { get<8>(t) };
-    { get<9>(t) };
-    { get<10>(t) };
-    { get<11>(t) };
-    { get<12>(t) };
-    { get<13>(t) };
-    { get<14>(t) };
-    { get<15>(t) };
-    { get<16>(t) };
-    { get<17>(t) };
-    { get<18>(t) };
-    { get<19>(t) };
-    { get<20>(t) };
-};
-
-template <typename T>
-concept bool IsPair = requires(T t) {
-    { first(t) };
-    { second(t) };
-};
-
-template <typename T>
-concept bool IsString = requires(T t) {
-    { string(t) };
-};
-
-template <typename T>
-concept bool IsNumber = requires(T t) {
-    { number(t) };
-};
-
-template <typename T>
-concept bool IsBool = requires(T t) {
-    { boolean(t) };
-};
-
-template <typename T>
-concept bool IsChar = requires(T t) {
-    { char(t) };
-};
-
-template <typename T>
-concept bool IsVoid = requires(T t) {
-    { void(t) };
-};
-
-template <typename T>
-concept bool IsNull = requires(T t) {
-    { null(t) };
-};
-
-template <typename T>
-concept bool IsUndefined = requires(T t) {
-    { undefined(t) };
-};
-
-template <typename T>
-concept bool IsObject = requires(T t) {
-    { object(t) };
-};
-
-template <typename T>
-concept bool IsArray = requires(T t) {
-    { array(t) };
-};
-
-template <typename T>
-concept bool IsEnum = requires(T t) {
-    { enum(t) };
-};
-
-template <typename T>
-concept bool IsUnion = requires(T t) {
-    { union(t) };
-};
-
-template <typename T>
-concept bool IsStruct = requires(T t) {
-    { struct(t) };
-};
-
-template <typename T>
-concept bool IsClass = requires(T t) {
-    { class(t) };
-};
-
-template <typename T>
-concept bool IsInterface = requires(T t) {
-    { interface(t) };
-};
-
-template <typename T>
-concept bool IsAbstract = requires(T t) {
-    { abstract(t) };
-};
-
-template <typename T>
-concept bool IsVirtual = requires(T t) {
-    { virtual(t) };
-};
-
-template <typename T>
-concept bool IsOverride = requires(T t) {
-    { override(t) };
-};
-
-template <typename T>
-concept bool IsFinal = requires(T t) {
-    { final(t) };
-};
-
-template <typename T>
-concept bool IsStatic = requires(T t) {
-    { static(t) };
-};
-
-template <typename T>
-concept bool IsConstexpr = requires(T t) {
-    { constexpr(t) };
-};
-
-template <typename T>
-concept bool IsNoexcept = requires(T t) {
-    { noexcept(t) };
-};
-
-template <typename T>
-concept bool IsDefaultConstructible = requires(T t) {
-    { new T{} };
-};
-
-template <typename T>
-concept bool IsCopyConstructible = requires(T t) {
-    { new T{} };
-};
+    return 0;
+}
