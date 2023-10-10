@@ -18,12 +18,12 @@ void sortAndFilterVectorOfStrings(T& vec) {
     // Sort the vector in descending order by string length
     std::sort(vec.begin(), vec.end(), [](const auto& a, const auto& b) {
         return a.length() > b.length();
-    });
+    }, std::greater<>{});
     
     // Remove any empty strings from the vector
     vec.erase(std::remove_if(vec.begin(), vec.end(), [](const auto& s) {
         return s.empty();
-    }), vec.end());
+    }));
 }
 
 int main() {
