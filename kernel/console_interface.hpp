@@ -1,8 +1,23 @@
-#pragma once
+// myconsole.cpp
+export module MyConsole;
+import <iostream>;
+import <string>;
 
-#include <memory>
-
-struct ConsoleInterface {
-    virtual ~ConsoleInterface() = default;
-    virtual void run() = 0;
+template <typename T>
+concept Printable = requires(T t) {
+    { t.print() };
 };
+
+class Console : public Printable {
+public:
+    void print() const override {
+        std::cout << "Hello from MyConsole!" << std::endl;
+    }
+};
+
+export template <>
+void run<Console>() {
+    auto c = new Console();
+    c->print();
+    delete c;
+}
