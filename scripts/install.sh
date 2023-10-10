@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# Clone the repository
-git clone https://github.com/Asphorr/funicod.git
+# Download the latest release from GitHub
+curl -L https://github.com/Asphorr/funiculous/releases/latest/download/funiculus.tar.gz | tar xzvf -C /tmp
 
-# Change directories into the cloned repository
-cd funiculus
+# Move to the extracted directory
+cd /tmp/funiculus*
 
-# Compile the program
-make
+# Compile the source files
+g++ -o funiculus *.cpp
 
-# Install the program
-make install
+# Run the installed binary
+./funiculus
 
-# Set executable permission
-chmod +x install.sh
+# Remove temporary files
+rm -rf /tmp/funiculus*
