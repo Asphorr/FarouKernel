@@ -4,78 +4,59 @@
 #include <vector>
 #include <filesystem>
 
-using namespace std;
+namespace fs = std::filesystem;
 
-class DirectoryWriter {
-public:
-    // Create a new directory and write data to file
-    template <typename T>
-    void createDirectoryAndWriteToFile(const fs::path& dirPath, const vector<T>& data) {
-        try {
-            // Check if directory exists
-            if (!fs::exists(dirPath)) {
-                // Create directory
-                fs::create_directories(dirPath);
-            }
-            
-            // Open output stream
-            fstream outStream(dirPath / "file.txt", ios::out | ios::trunc);
-            
-            // Write data to file
-            for (auto&& elem : data) {
-                outStream << elem << endl;
-            }
-            
-            // Close output stream
-            outStream.close();
-        } catch (exception& e) {
-            cerr << "Error creating or writing to file: " << e.what() << endl;
+void createDirectoryAndWriteToFile(const fs::path& dirPath, const std::vector<std::string>& data) {
+    try {
+        if (!fs::exists(dirPath)) {
+            fs::create_directory(dirPath);
         }
-    }
-    
-    // Read data from file and delete it
-    void readFromFileAndDeleteIt(const fs::path& filePath) {
-        try {
-            // Open input stream
-            fstream inStream(filePath, ios::in);
-            
-            // Read data from file
-            string content((istreambuf_iterator<char>(inStream)), istreambuf_iterator<char>());
-            
-            // Print data to console
-            cout << "File contents:" << endl << content << endl;
-            
-            // Delete file
-            fs::remove(filePath);
-        } catch (exception& e) {
-            cerr << "Error reading or deleting file: " << e.what() << endl;
+        
+        std::ofstream outStream(dirPath / "file.txt", std::ios::out | std::ios::trunc);
+        
+        for (const auto& line : data) {
+            outStream << line << '\n';
         }
+        
+        outStream.close();
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating or writing to file: " << e.what() << '\n';
     }
-    
-    // Delete empty directory
-    void deleteEmptyDirectory(const fs::path& dirPath) {
-        try {
-            // Check if directory is empty
-            if (fs::is_empty(dirPath)) {
-                // Remove directory
-                fs::remove(dirPath);
-            } else {
-                throw runtime_error("Cannot remove non-empty directory.");
-            }
-        } catch (exception& e) {
-            cerr << "Error removing directory: " << e.what() << endl;
+}
+
+void readFromFileAndDeleteIt(const fs::path& filePath) {
+    try {
+        std::ifstream inStream(filePath, std::ios::in);
+        
+        std::string content((std::istreambuf_iterator<char>(inStream)), std::istreambuf_iterator<char>());
+        
+        std::cout << "File contents:\n" << content << "\n";
+        
+        fs::remove(filePath);
+    } catch (const std::exception& e) {
+        std::cerr << "Error reading or deleting file: " << e.what() << '\n';
+    }
+}
+
+void deleteEmptyDirectory(const fs::path& dirPath) {
+    try {
+        if (fs::is_empty(dirPath)) {
+            fs::remove(dirPath);
+        } else {
+            throw std::runtime_error("Cannot remove non-empty directory.");
         }
+    } catch (const std::exception& e) {
+        std::cerr << "Error removing directory: " << e.what() << '\n';
     }
-};
+}
 
 int main() {
-    DirectoryWriter writer;
     fs::path path{"dir"};
-    vector<string> data{"Hello", "World!"};
+    std::vector<std::string> data{"Hello", "World!"};
     
-    writer.createDirectoryAndWriteToFile(path, data);
-    writer.readFromFileAndDeleteIt(path / "file.txt");
-    writer.deleteEmptyDirectory(path);
+    createDirectoryAndWriteToFile(path, data);
+    readFromFileAndDeleteIt(path / "file.txt");
+    deleteEmptyDirectory(path);
     
     return 0;
 }
