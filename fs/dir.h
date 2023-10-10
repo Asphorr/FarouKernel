@@ -1,45 +1,96 @@
-#ifndef _DIR_H
-#define _DIR_H
+#include <filesystem>
+#include <iostream>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <utility>
 
-#include <stddef.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <utime.h>
+// Define an alias for the filesystem library
+namespace fs = std::filesystem;
 
-// Directory entry structure
-typedef struct dirent {
-ino_t d_ino; // Inode number
-off_t d_off; // Offset to the start of the file
-uint16_t d_reclen; // Length of this directory entry
-uint8_t d_type; // Type of file (see below)
-char d_name[256]; // Name of the file
-} DirEntry;
+// Define a class to represent a directory
+class Directory {
+ public:
+  // Constructor takes a file path and optionally a set of flags
+  explicit Directory(fs::path path, int flags = O_RDONLY | O_CLOEXEC)
+      : m_path(std::move(path)), m_flags(flags), m_handle(-1) {}
 
-// Types of files that can be stored in a directory
-enum FileType {
-REGULAR = 1, // Regular file
-DIRECTORY = 2, // Directory
-SYMLINK = 3, // Symbolic link
-BLOCKDEV = 4, // Block device
-CHARDEV = 5, // Character device
-FIFOPipe = 6, // FIFO (named pipe)
-SOCKET = 7, // Socket
+  // Destructor closes the directory handle if necessary
+  ~Directory() noexcept {
+    if (m_handle != -1) {
+      close(m_handle);
+    }
+  }
+
+  // Getter methods for the directory path and flags
+  const fs::path& path() const { return m_path; }
+  int flags() const { return m_flags; }
+
+  // Method to open the directory
+  void open() {
+    // Check if the directory is already open
+    if (m_handle != -1) {
+      throw std::runtime_error("Directory already open");
+    }
+
+    // Open the directory using the provided flags
+    m_handle = ::openat(AT_FDCWD, m_path.c_str(), m_flags);
+    if (m_handle == -1) {
+      throw std::system_error(errno, std::generic_category());
+    }
+  }
+
+  // Method to close the directory
+  void close() {
+    // Check if the directory is open
+    if (m_handle == -1) {
+      throw std::runtime_error("Directory not open");
+    }
+
+    // Close the directory
+    if (::close(m_handle) == -1) {
+      throw std::system_error(errno, std::generic_category());
+    }
+
+    // Reset the handle to indicate that the directory is closed
+    m_handle = -1;
+  }
+
+ private:
+  // Member variables for the directory path, flags, and handle
+  fs::path m_path;
+  int m_flags;
+  int m_handle;
 };
 
-// Function prototypes
-void initDir();
-void exitDir();
-int openDir(const char *path, int flags);
-int closeDir(int dirp);
-DirEntry *readDir(int dirp);
-int seekDir(int dirp, off_t offset);
-int tellDir(int dirp);
-int makeDir(const char *path, mode_t mode);
-int removeDir(const char *path);
-int renameFile(const char *oldPath, const char *newPath);
+// Function to print the contents of a directory
+void listFilesInDirectory(const Directory& directory) {
+  // Open the directory
+  directory.open();
 
-#endif // _DIR_H
+  // Read each entry from the directory until EOF is reached
+  struct dirent* entry;
+  while ((entry = readdir(directory.getHandle())) != nullptr) {
+    // Print the name of the current entry
+    std::cout << entry->d_name << '\n';
+  }
+
+  // Close the directory
+  directory.close();
+}
+
+// Main function
+int main() {
+  try {
+    // Create a new directory instance
+    Directory directory(".", O_RDONLY | O_CLOEXEC);
+
+    // List the files in the directory
+    listFilesInDirectory(directory);
+  } catch (const std::exception& e) {
+    std::cerr << "Error: " << e.what() << '\n';
+    return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
+}
