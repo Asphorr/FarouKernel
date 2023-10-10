@@ -11,65 +11,128 @@
 #include <chrono>
 #include <exception>
 
+// Define a custom exception type for program startup failures
+struct ProgramStartupFailure : public std::runtime_error {
+    explicit ProgramStartupFailure(const char *message) : runtime_error(message) {}
+};
+
+// A class representing a program runner
 class ProgramRunner {
 public:
-    explicit ProgramRunner(const std::vector<std::string>& arguments): _arguments{arguments}, _running{false} {}
-    
-    ~ProgramRunner() {
-        stop();
-    }
-    
-    bool run() {
+    // Constructor takes a vector of strings containing the program arguments
+    explicit ProgramRunner(const std::vector<std::string> &args) : args_(args) {}
+
+    // Run the program asynchronously
+    [[nodiscard]] bool runAsync() noexcept {
         try {
-            auto future = std::async(std::launch::async, [this]{
-                _running = true;
-                
+            // Create an asynchronous task to run the program
+            auto future = std::async(std::launch::async, [&](){
                 // Set up the program environment
                 setupEnvironment();
-                
+
                 // Start the program
-                startProgram(_arguments);
-                
+                startProgram(args_);
+
                 // Wait for the program to finish
                 waitForProgramToFinish();
-                
+
                 // Clean up and exit
                 cleanUpAndExit();
             });
-            
+
+            // Return whether the task was successfully created
             return future.valid();
         } catch (...) {
+            // Handle any exceptions thrown during async execution
+            handleException();
             return false;
         }
     }
-    
-    void stop() {
-        if (_running) {
-            _running = false;
-            _cv.notify_all();
+
+    // Stop the program
+    void stop() noexcept {
+        // Acquire the mutex lock
+        std::lock_guard<std::mutex> lock(mtx_);
+
+        // Check if the program is still running
+        if (running_) {
+            // Signal the condition variable to notify the waiting thread
+            cv_.notify_one();
+
+            // Update the running flag
+            running_ = false;
         }
     }
+
 private:
-    const std::vector<std::string> _arguments;
-    volatile bool _running;
-    std::mutex _mtx;
-    std::condition_variable _cv;
+    // The program arguments
+    const std::vector<std::string> args_;
+
+    // Mutex for synchronizing access to the running flag
+    mutable std::mutex mtx_;
+
+    // Condition variable for signaling between threads
+    std::condition_variable cv_;
+
+    // Flag indicating whether the program is currently running
+    bool running_{true};
+
+    // Method for setting up the program environment
+    static void setupEnvironment() noexcept {};
+
+    // Method for starting the program
+    static int startProgram(const std::vector<std::string> &args) noexcept {
+        // TODO: Implement your own program startup logic here
+        return 0;
+    }
+
+    // Method for waiting for the program to finish
+    static void waitForProgramToFinish() noexcept {
+        // TODO: Implement your own program finishing logic here
+    }
+
+    // Method for cleaning up after the program has finished
+    static void cleanUpAndExit() noexcept {
+        // TODO: Implement your own cleanup logic here
+    }
+
+    // Method for handling exceptions thrown during async execution
+    static void handleException() noexcept {
+        // TODO: Implement your own exception handling logic here
+    }
 };
 
 int main() {
-    std::cout << "Enter command line arguments separated by spaces:" << std::endl;
-    std::vector<std::string> arguments;
-    std::copy(std::istream_iterator<std::string>(std::cin), std::istream_iterator<std::string>(), std::back_inserter(arguments));
-    
-    ProgramRunner runner(arguments);
-    if (!runner.run()) {
-        std::cerr << "Failed to start program" << std::endl;
+    // Get the program arguments from the console input
+    std::vector<std::string> args;
+    while (std::getline(std::cin, args)) {
+        break;
+    }
+
+    // Create a new instance of the program runner
+    ProgramRunner runner(args);
+
+    // Try to run the program asynchronously
+    if (!runner.runAsync()) {
+        std::cerr << "Failed to start program." << std::endl;
         return EXIT_FAILURE;
     }
-    
-    std::cout << "Press enter to stop the program..." << std::endl;
-    getchar();
-    
-    runner.stop();
+
+    // Print a prompt to the console
+    std::cout << "Press Enter to stop the program...";
+
+    // Read a character from the console input
+    char c;
+    std::cin >> c;
+
+    // Check if the entered character is 'enter'
+    if (c == '\n') {
+        // Stop the program
+        runner.stop();
+    } else {
+        // Print an error message to the console
+        std::cerr << "Invalid input. Please press Enter to stop the program." << std::endl;
+    }
+
     return EXIT_SUCCESS;
 }
