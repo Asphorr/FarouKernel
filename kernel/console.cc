@@ -1,16 +1,23 @@
-#include "console_interface.hpp"
-#include "command_parser.hpp"
-#include "command_executor.hpp"
-#include "error_handler.hpp"
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <utility>
 
-// Define the command line interface
-class Console : public ConsoleInterface {
+class Console final : public ConsoleInterface {
 public:
-    explicit Console(CommandParser parser, CommandExecutor executor, ErrorHandler handler)
-      : _parser{parser}, _executor{executor}, _handler{handler} {}
+    // Delegate construction to private constructor
+    template <typename ParserT, typename ExecutorT, typename HandlerT>
+    static std::unique_ptr<Console> Create(ParserT&& parser, ExecutorT&& executor, HandlerT&& handler) {
+        return std::make_unique<Console>(std::forward<ParserT>(parser), std::forward<ExecutorT>(executor), std::forward<HandlerT>(handler));
+    }
 
-    virtual ~Console() override = default;
+    // Move constructor
+    Console(Console&& other) noexcept = default;
 
+    // Destructor
+    ~Console() override = default;
+
+    // Run method
     void run() override {
         while (!isEof()) {
             try {
@@ -23,24 +30,35 @@ public:
     }
 
 private:
-    CommandParser _parser;
-    CommandExecutor _executor;
-    ErrorHandler _handler;
+    // Private constructor
+    Console(CommandParser parser, CommandExecutor executor, ErrorHandler handler)
+      : _parser{std::move(parser)}, _executor{std::move(executor)}, _handler{std::move(handler)} {}
 
-    bool isEof() { return !std::cin.good(); }
+    // Check if EOF has been reached
+    [[nodiscard]] bool isEof() const {
+        return !std::cin.good();
+    }
 
-    std::string readLine() {
+    // Read a line from standard input
+    [[noreturn]] std::string readLine() {
         std::string line;
         getline(std::cin, line);
         return line;
     }
 
+    // Parse and execute a command
     void executeCommand(const std::string& command) {
-        auto parsedCommand = _parser.parse(command);
-        _executor.execute(parsedCommand);
+        auto parsedCommand = _parser->parse(command);
+        _executor->execute(parsedCommand);
     }
 
+    // Handle an exception thrown during execution
     void handleError(const std::exception& e) {
-        _handler.handle(e);
+        _handler->handle(e);
     }
+
+    // Member variables
+    std::shared_ptr<CommandParser> _parser;
+    std::shared_ptr<CommandExecutor> _executor;
+    std::shared_ptr<ErrorHandler> _handler;
 };
