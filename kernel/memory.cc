@@ -1,54 +1,68 @@
-#include <iostream>
-#include <memory>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <functional>
+#include <initializer_list>
+#include <iterator>
+#include <limits>
+#include <new>
+#include <type_traits>
 #include <utility>
 #include <vector>
-#include <algorithm>
-#include <numeric>
 
-class MemoryManager {
-public:
-    static void allocate(std::size_t size) {
-        auto ptr = std::make_unique<MemoryBlock>();
-        ptr->startAddress = reinterpret_cast<uintptr_t>(malloc(size));
-        ptr->endAddress = ptr->startAddress + size;
-        blockList.emplace_back(std::move(ptr));
-    }
-
-    static void deallocate(uintptr_t addr) {
-        auto iter = std::find_if(blockList.begin(), blockList.end(), [&](const auto& p) { return p->startAddress == addr; });
-        if (iter != blockList.end()) {
-            free((*iter)->startAddress);
-            (*iter).reset();
-            blockList.erase(iter);
-        }
-    }
-
-    static void printFreeMemory() {
-        std::cout << "Total Free Memory: ";
-        auto totalFreeMem = std::accumulate(blockList.begin(), blockList.end(), 0, [](auto acc, const auto& p) { return acc + (p->endAddress - p->startAddress); });
-        std::cout << totalFreeMem << std::endl;
-    }
-private:
-    struct MemoryBlock {
-        uintptr_t startAddress;
-        uintptr_t endAddress;
-    };
-
-    static std::vector<std::unique_ptr<MemoryBlock>> blockList;
+template <typename T>
+struct MemoryBlock {
+    T* startAddress;
+    T* endAddress;
 };
 
+template <typename T>
+using BlockList = std::vector<MemoryBlock<T>>;
+
+template <typename T>
+void allocate(BlockList<T>& list, std::size_t size) {
+    auto ptr = new MemoryBlock<T>;
+    ptr->startAddress = reinterpret_cast<T*>(malloc(size));
+    ptr->endAddress = ptr->startAddress + size / sizeof(T);
+    list.push_back(*ptr);
+}
+
+template <typename T>
+void deallocate(BlockList<T>& list, T* address) {
+    auto iter = std::find_if(list.begin(), list.end(), [address](const MemoryBlock<T>& block) {
+        return block.startAddress <= address && address < block.endAddress;
+    });
+    if (iter != list.end()) {
+        free(iter->startAddress);
+        list.erase(iter);
+    }
+}
+
+template <typename T>
+void printFreeMemory(const BlockList<T>& list) {
+    std::printf("Total Free Memory: %zu\n", std::accumulate(list.begin(), list.end(), 0, [](auto acc, const MemoryBlock<T>& block) {
+        return acc + (block.endAddress - block.startAddress);
+    }));
+}
+
 int main() {
+    BlockList<int> intBlocks;
+    BlockList<double> doubleBlocks;
+    BlockList<char> charBlocks;
+
     // Allocate some memory blocks
-    auto memPtr1 = MemoryManager::allocate(4 * sizeof(int));
-    auto memPtr2 = MemoryManager::allocate(8 * sizeof(double));
-    auto memPtr3 = MemoryManager::allocate(16 * sizeof(char));
+    allocate(intBlocks, 4 * sizeof(int));
+    allocate(doubleBlocks, 8 * sizeof(double));
+    allocate(charBlocks, 16 * sizeof(char));
 
     // Deallocate some memory blocks
-    MemoryManager::deallocate(memPtr1);
-    MemoryManager::deallocate(memPtr2);
+    deallocate(intBlocks, intBlocks[0].startAddress);
+    deallocate(doubleBlocks, doubleBlocks[0].startAddress);
 
     // Print free memory
-    MemoryManager::printFreeMemory();
+    printFreeMemory(intBlocks);
+    printFreeMemory(doubleBlocks);
+    printFreeMemory(charBlocks);
 
     return 0;
 }
