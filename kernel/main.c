@@ -1,5 +1,5 @@
 #include <iostream>
-#include <vector>
+#include <version>
 #include <string>
 #include <chrono>
 #include <thread>
@@ -7,56 +7,96 @@
 #include <condition_variable>
 #include <functional>
 #include <memory>
-#include <cassert>
+#include <concepts>
+#include <type_traits>
 
-using namespace std::literals;
+// Define a concept for the kernel class
+template <typename T>
+concept KernelConcept = requires(T k) {
+    // Requirements for the kernel class
+    { k.getName() } -> std::convertible_to<std::string>;
+    { k.getVersion() } -> std::convertible_to<std::pair<int, int>>;
+    { k.getReleaseDate() } -> std::convertible_to<std::string>;
+    { k.getBuildTime() } -> std::convertible_to<std::string>;
+    { k.getAuthor() } -> std::convertible_to<std::string>;
+    { k.getCopyright() } -> std::convertible_to<std::string>;
+    { k.getLicense() } -> std::convertible_to<std::string>;
+    { k.getDescription() } -> std::convertible_to<std::string>;
+    { k.isRunning() } -> std::same_as<bool>;
+    { k.isStopped() } -> std::same_as<bool>;
+    { k.requestStop() } -> std::same_as<void>;
+    { k.waitForStop() } -> std::same_as<void>;
+};
 
-class Kernel {
+// Implement the kernel class
+class Kernel final : public KernelConcept<Kernel> {
 public:
-    explicit Kernel(const std::string& name, int major, int minor, const std::string& releaseDate, const std::string& buildTime, const std::string& author, const std::string& copyright, const std::string& license, const std::string& description) :
+    // Constructor
+    Kernel(const std::string& name, int major, int minor, const std::string& releaseDate, const std::string& buildTime, const std::string& author, const std::string& copyright, const std::string& license, const std::string& description) :
         m_name{name}, m_major{major}, m_minor{minor}, m_releaseDate{releaseDate}, m_buildTime{buildTime}, m_author{author}, m_copyright{copyright}, m_license{license}, m_description{description} {}
 
-    ~Kernel() noexcept {
-        stop();
+    // Destructor
+    ~Kernel() noexcept override {
+        requestStop();
+        waitForStop();
     }
 
-    void start() {
-        assert(!m_running && !m_stopped);
-        m_running = true;
-        m_stopRequested = false;
-        m_mainThread = std::make_unique<std::thread>(&Kernel::run, this);
-    }
+    // Getters
+    [[nodiscard]] std::string getName() const override { return m_name; }
+    [[nodiscard]] std::pair<int, int> getVersion() const override { return {m_major, m_minor}; }
+    [[nodiscard]] std::string getReleaseDate() const override { return m_releaseDate; }
+    [[nodiscard]] std::string getBuildTime() const override { return m_buildTime; }
+    [[nodiscard]] std::string getAuthor() const override { return m_author; }
+    [[nodiscard]] std::string getCopyright() const override { return m_copyright; }
+    [[nodiscard]] std::string getLicense() const override { return m_license; }
+    [[nodiscard]] std::string getDescription() const override { return m_description; }
 
-    void stop() {
-        assert(m_running || m_stopped);
+    // Check running status
+    [[nodiscard]] bool isRunning() const override { return m_running; }
+    [[nodiscard]] bool isStopped() const override { return m_stopped; }
+
+    // Request stop
+    void requestStop() override {
         m_stopRequested = true;
-        m_cv.notify_all();
-        m_mainThread->join();
-        m_mainThread.reset();
-        m_running = false;
-        m_stopped = true;
+        m_cv.notify_one();
+    }
+
+    // Wait for stop
+    void waitForStop() override {
+        std::scoped_lock lock(m_mutex);
+        m_cv.wait(lock, [this]{ return m_stopRequested; });
     }
 
 private:
-    void run() {
-        while (!m_stopRequested) {
-            auto tp = std::chrono::system_clock::now().time_since_epoch();
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(tp).count();
-            std::cout << "[" << ms << "ms] Hello from kernel!" << std::endl;
-            std::this_thread::sleep_for(500ms);
-        }
-    }
-
+    // Member variables
+    std::string m_name;
+    int m_major;
+    int m_minor;
+    std::string m_releaseDate;
+    std::string m_buildTime;
+    std::string m_author;
+    std::string m_copyright;
+    std::string m_license;
+    std::string m_description;
     bool m_running = false;
     bool m_stopped = false;
     bool m_stopRequested = false;
-    std::unique_ptr<std::thread> m_mainThread;
+    mutable std::mutex m_mutex;
+    std::condition_variable m_cv;
 };
 
 int main() {
-    Kernel kernel{"My First Kernel", 1, 0, "2023-09-28", "14:30:00", "Mikhail", "Copyright (C) 2023 Mikhail", "MIT License", "A simple kernel for learning purposes"};
+    // Create a kernel instance
+    Kernel kernel("My First Kernel", 1, 0, "2023-09-28", "14:30:00", "Mikhail", "Copyright (C) 2023 Mikhail", "MIT License", "A simple kernel for learning purposes");
+
+    // Start the kernel
     kernel.start();
+
+    // Wait for user input before stopping the kernel
     std::cin.get();
+
+    // Stop the kernel
     kernel.stop();
+
     return 0;
 }
