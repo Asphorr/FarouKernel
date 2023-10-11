@@ -1,9 +1,23 @@
 #include <iostream>
-#include <string>
 #include <vector>
 #include <algorithm>
 #include <numeric>
 #include <functional>
+
+// Define a type alias for the accumulator function
+using AccumulatorFunc = std::plus<>;
+
+// Implement the SumFirstKElements concept
+template <typename T>
+concept bool SumFirstKElements = requires(T x, T y) {
+    { x + y } -> T;
+};
+
+// Implement the apply method for the SumFirstKElements concept
+template <SumFirstKElements T>
+constexpr decltype(auto) apply(T begin, T end, size_t k) {
+    return std::accumulate(std::next(begin), std::min(std::next(begin, k), end), *begin);
+}
 
 int main() {
     // Read input from stdin
@@ -17,11 +31,11 @@ int main() {
     }
     
     // Sort the vector in descending order
-    std::sort(numbers.begin(), numbers.end(), std::greater<>());
+    std::sort(numbers.rbegin(), numbers.rend());
     
     // Calculate sum of first k elements
     auto k = n / 2;
-    long long sum = std::accumulate(numbers.begin(), numbers.begin() + k, 0ll);
+    long long sum = apply(numbers.begin(), numbers.end(), k);
     
     // Print result
     std::cout << sum << "\n";
