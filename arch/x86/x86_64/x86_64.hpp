@@ -1,4 +1,4 @@
-#include <bit>
+=#include <bit>
 #include <concepts>
 #include <iostream>
 #include <type_traits>
@@ -26,7 +26,7 @@ enum class InstructionSet : uint32_t {
 // Define concept for unsigned integer types
 template<typename T>
 concept UnsignedInteger = requires(T t) {
-    { t } -> std::convertible_to<std::size_t>;
+    { t } -> convertible_to<size_t>;
 };
 
 // Define helper function for getting instruction set flags
