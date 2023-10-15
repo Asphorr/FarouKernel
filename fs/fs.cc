@@ -3,47 +3,102 @@
 #include <string>
 #include <vector>
 #include <filesystem>
-#include <memory>
-#include <utility>
+#include <cstdlib>
 
-using namespace std;
-
-struct FileSystem {
-    unique_ptr<Directory> root_;
-    Directory* current_;
-
-    void mkdir(const string& path) {
-        try {
-            auto dir = std::make_unique<Directory>(path);
-            root_.reset();
-            current_ = dir.get();
-        } catch (exception& e) {
-            cerr << "Error creating directory: " << e.what() << endl;
+class Directory {
+public:
+    explicit Directory(const std::string& name) : name_(name), parent_(nullptr) {}
+    ~Directory() {
+        for (auto& child : children_) {
+            delete child;
         }
     }
 
-    void rmdir(const string& path) {
-        try {
-            auto dir = std::make_unique<Directory>(path);
-            root_.release();
-            current_ = nullptr;
-        } catch (exception& e) {
-            cerr << "Error removing directory: " << e.what() << endl;
-        }
+    void addChild(Directory* child) {
+        children_.emplace_back(child);
     }
 
-    vector<string> ls(const string& path) const {
-        try {
-            vector<string> files;
-            for (auto& entry : std::filesystem::recursive_directory_iterator(path)) {
-                files.push_back(entry.path().filename());
+    void removeChild(const std::string& name) {
+        for (size_t i = 0; i < children_.size(); ++i) {
+            if (children_[i]->getName() == name) {
+                delete children_[i];
+                children_.erase(children_.begin() + i);
+                break;
             }
-            return files;
-        } catch (exception& e) {
-            cerr << "Error listing directory: " << e.what() << endl;
-            return {};
         }
     }
+
+    Directory* findChildByName(const std::string& name) {
+        for (auto& child : children_) {
+            if (child->getName() == name) {
+                return child;
+            }
+        }
+        return nullptr;
+    }
+
+    std::vector<std::string> listFiles() const {
+        std::vector<std::string> result;
+        for (auto& child : children_) {
+            result.insert(result.end(), child->listFiles().begin(), child->listFiles().end());
+        }
+        return result;
+    }
+
+private:
+    std::string name_;
+    Directory* parent_;
+    std::vector<Directory*> children_;
+};
+
+class FileSystem {
+public:
+    FileSystem() : root_(new Directory(".")), current_(root_) {}
+    ~FileSystem() {
+        delete root_;
+    }
+
+    void cd(const std::string& path) {
+        current_ = root_->findChildByName(path).get();
+    }
+
+    void pwd() {
+        std::cout << current_->getName() << '\n';
+    }
+
+    void mkdir(const std::string& path) {
+        auto dir = new Directory(path);
+        root_->addChild(dir);
+        current_ = dir;
+    }
+
+    void rmdir(const std::string& path) {
+        root_->removeChild(path);
+    }
+
+    void touch(const std::string& filename) {
+        std::ofstream out(filename);
+        out.close();
+    }
+
+    void cat(const std::string& filename) {
+        std::ifstream in(filename);
+        while (!in.eof()) {
+            char buffer[BUFSIZ];
+            size_t bytesRead = fread(buffer, sizeof(char), BUFSIZ, in.rdbuf());
+            std::cout.write(buffer, bytesRead);
+        }
+        in.close();
+    }
+
+    void echo(const std::string& text) {
+        std::ofstream out(text);
+        out.close();
+    }
+
+private:
+    Directory* root_;
+    Directory* current_;
 };
 
 int main() {
@@ -55,31 +110,31 @@ int main() {
     fs.mkdir("mydir/subdir2");
 
     // Print the contents of the root directory
-    cout << "Root directory:" << endl;
+    fs.pwd();
     for (auto& dir : fs.ls("/")) {
-        cout << "\t" << dir << endl;
+        std::cout << "\t" << dir << '\n';
     }
 
     // Change into the subdirectory
-    fs.current_ = fs.root_->findChildByName("subdir1").get();
+    fs.cd("mydir/subdir1");
 
     // Print the contents of the subdirectory
-    cout << "Subdirectory:" << endl;
+    fs.pwd();
     for (auto& dir : fs.ls(".")) {
-        cout << "\t" << dir << endl;
+        std::cout << "\t" << dir << '\n';
     }
 
     // Go back up one level
-    fs.current_ = fs.root_->parent();
+    fs.cd("..");
 
     // Delete the subdirectories
     fs.rmdir("mydir/subdir1");
     fs.rmdir("mydir/subdir2");
 
     // Print the contents of the root directory again
-    cout << "Root directory after deletion:" << endl;
+    fs.pwd();
     for (auto& dir : fs.ls("/")) {
-        cout << "\t" << dir << endl;
+        std::cout << "\t" << dir << '\n';
     }
 
     return 0;
