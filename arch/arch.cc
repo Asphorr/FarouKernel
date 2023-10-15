@@ -1,11 +1,12 @@
 #include <iostream>
 #include <vector>
+#include <iterator>
 #include <algorithm>
 #include <numeric>
 #include <functional>
 
 // Define a type alias for the accumulator function
-using AccumulatorFunc = std::plus<>;
+using AccumulatorFunc = std::plus<>();
 
 // Implement the SumFirstKElements concept
 template <typename T>
