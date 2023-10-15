@@ -1,8 +1,7 @@
 #include <iostream>
 #include <vector>
-#include <iterator>
-#include <algorithm>
 #include <numeric>
+#include <algorithm>
 #include <functional>
 
 // Define a type alias for the accumulator function
@@ -35,7 +34,7 @@ int main() {
     std::sort(numbers.rbegin(), numbers.rend());
     
     // Calculate sum of first k elements
-    auto k = n / 2;
+    constexpr size_t k = n / 2;
     long long sum = apply(numbers.begin(), numbers.end(), k);
     
     // Print result
