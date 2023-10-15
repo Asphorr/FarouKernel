@@ -1,48 +1,226 @@
-=#include <bit>
-#include <concepts>
-#include <iostream>
-#include <type_traits>
+#include <bit>
+#include <cstddef>
+#include <cstdio>
+#include <cstring>
+#include <exception>
+#include <stdexcept>
+#include <system_error>
+#include <vector>
 
-using namespace std;
+namespace cpuid {
 
-// Define instruction set enum class
-enum class InstructionSet : uint32_t {
-    None = 0,
-    SSE = 1 << 0,
-    SSE2 = 1 << 1,
-    SSE3 = 1 << 2,
-    SSSE3 = 1 << 3,
-    SSE4_1 = 1 << 4,
-    SSE4_2 = 1 << 5,
-    AVX = 1 << 6,
-    AVX2 = 1 << 7,
-    FMA = 1 << 8,
-    FMA4 = 1 << 9,
-    FMA3 = 1 << 10,
-    AVX512F = 1 << 11,
-    AVX512CD = 1 << 12,
+struct FeatureInfo {
+    constexpr FeatureInfo() {}
+    explicit operator bool() const { return false; }
 };
 
-// Define concept for unsigned integer types
-template<typename T>
-concept UnsignedInteger = requires(T t) {
-    { t } -> convertible_to<size_t>;
+constexpr inline FeatureInfo& operator|=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags |= rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator|(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags | rhs.flags};
+}
+
+constexpr inline FeatureInfo operator~(const FeatureInfo& info) {
+    return FeatureInfo{~info.flags};
+}
+
+constexpr inline FeatureInfo operator<<(const FeatureInfo& info, size_t shift) {
+    return FeatureInfo{info.flags << shift};
+}
+
+constexpr inline FeatureInfo operator>>(const FeatureInfo& info, size_t shift) {
+    return FeatureInfo{info.flags >> shift};
+}
+
+constexpr inline FeatureInfo& operator+=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags += rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator+(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags + rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator*=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags *= rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator*(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags * rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator/=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags /= rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator/(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags / rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator%=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags %= rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator%(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags % rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator^=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags ^= rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator^(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags ^ rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator&=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags &= rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator&(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags & rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator|=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags |= rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator|(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags | rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator!=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags != rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator==(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags == rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator>=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags >= rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator>=(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags >= rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator<=(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags <= rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator<=(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags <= rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator>>(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags > rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator>(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags > rhs.flags};
+}
+
+constexpr inline FeatureInfo& operator<(FeatureInfo& lhs, const FeatureInfo& rhs) {
+    lhs.flags < rhs.flags;
+    return lhs;
+}
+
+constexpr inline FeatureInfo operator<(const FeatureInfo& lhs, const FeatureInfo& rhs) {
+    return FeatureInfo{lhs.flags < rhs.flags};
+}
+
+class FeatureDetector {
+public:
+    virtual ~FeatureDetector() = default;
+    virtual void init() = 0;
+    virtual FeatureInfo queryFeatures() = 0;
 };
 
-// Define helper function for getting instruction set flags
-constexpr auto getInstructionSetFlags() noexcept -> bitset<32> {
-    return bitset<32>{static_cast<uint32_t>(InstructionSet::None)};
-}
+class X86CpuIdFeatureDetector final : public FeatureDetector {
+private:
+    struct EaxRegister {
+        uint32_t eax;
+        uint32_t ebx;
+        uint32_t ecx;
+        uint32_t edx;
+    };
 
-// Define helper function for checking instruction set flags
-template<UnsignedInteger UIntType>
-requires std::same_as<UIntType, uint32_t> || std::same_as<UIntType, uint64_t>
-constexpr auto hasInstructionSetFlag(InstructionSet flag) noexcept -> bool {
-    return (getInstructionSetFlags().to_ullong() & static_cast<uint32_t>(flag)) != 0;
-}
+    struct EbxRegister {
+        uint32_t eax;
+        uint32_t ebx;
+        uint32_t ecx;
+        uint32_t edx;
+    };
 
-int main() {
-    // Example usage
-    cout << "Has AVX support: " << hasInstructionSetFlag(InstructionSet::AVX) << endl;
-    return 0;
-}
+    struct EcxRegister {
+        uint32_t eax;
+        uint32_t ebx;
+        uint32_t ecx;
+        uint32_t edx;
+    };
+
+    struct EdxRegister {
+        uint32_t eax;
+        uint32_t ebx;
+        uint32_t ecx;
+        uint32_t edx;
+    };
+
+    union RegisterUnion {
+        EaxRegister eax;
+        EbxRegister ebx;
+        EcxRegister ecx;
+        EdxRegister edx;
+    };
+
+    template <typename Reg>
+    static consteval auto readReg(Reg reg) {
+        switch (reg) {
+            case EaxRegister:
+                return __builtin_cpuid_eax();
+            case EbxRegister:
+                return __builtin_cpuid_ebx();
+            case EcxRegister:
+                return __builtin_cpuid_ecx();
+            case EdxRegister:
+                return __builtin_cpuid_edx();
+            default:
+                throw std::runtime_error("Invalid register");
+        }
+    }
+
+    template <typename Reg>
+    static consteval auto writeReg(Reg reg, uint32_t value) {
+        switch (reg) {
+            case EaxRegister:
+                __builtin_cpuid_eax(value);
+                break;
+            case EbxRegister:
+                __builtin_cpuid_ebx(value);
+                break;
+            case EcxRegister:
+                __builtin_cpuid_ecx(value);
+                break;
+            case EdxRegister:
+                __builtin_cpuid_edx(value);
+                break;
+            default:
+                throw std::runtime_error("Invalid register");
+        }
+    }
+
+    template <typename Reg>
