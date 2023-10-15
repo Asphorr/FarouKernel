@@ -26,13 +26,13 @@ struct CpuIdInfo {
 // Define a function to print out CPUID information
 void printCpuIdInfo(const CpuIdInfo& info) {
     // Use std::format to create a formatted string
-    std::string cpuidString = std::format("CPUID Information:\n\nVendor ID: {:x}\nDevice ID: {:x}\nRevision: {:x}\nFeatures: {:x}",
-                                          info.vendorId, info.deviceId, info.revision, info.features);
+    auto cpuidString = std::format("CPUID Information:\n\nVendor ID: {:x}\nDevice ID: {:x}\nRevision: {:x}\nFeatures: {:x}",
+                                   info.vendorId, info.deviceId, info.revision, info.features);
     
     // Iterate over the instruction sets and append them to the string
-    for (size_t i = 0; i < info.instructionSets.size(); ++i) {
-        if (info.instructionSets[i]) {
-            cpuidString += std::format("\nInstruction Set {} ({})", i + 1, info.instructionSets[i]);
+    for (auto&& [index, instructionSet] : enumerate(info.instructionSets)) {
+        if (instructionSet) {
+            cpuidString += std::format("\nInstruction Set {} ({})", index + 1, instructionSet);
         }
     }
     
