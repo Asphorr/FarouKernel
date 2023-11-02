@@ -1,43 +1,53 @@
 #include <iostream>
 #include <vector>
-#include <utility>
 #include <algorithm>
-#include <iterator>
+#include <cmath>
 
+namespace util {
+
+// Print a vector to stdout
 template <typename T>
-struct UtilityFunctions {
-    static void printVector(const std::vector<T>& v) {
-        std::cout << '[';
-        std::copy(v.begin(), v.end(), std::ostream_iterator<T>(std::cout, ", "));
-        std::cout << ']';
-    }
-    
-    template <typename U>
-    static std::vector<U> getUniqueElements(const std::vector<U>& v) {
-        std::sort(v.begin(), v.end());
-        std::vector<U> result;
-        std::set_difference(v.begin(), v.end(), result.begin(), result.end());
-        return result;
-    }
-    
-    template <typename V>
-    static bool hasDuplicates(const std::vector<V>& v) {
-        return !std::is_permutation(v.begin(), v.end(), v.begin());
-    }
-};
-
-int main() {
-    constexpr size_t n = 10;
-    std::vector<int> vec(n);
-    std::iota(vec.begin(), vec.end(), 0);
-    
-    UtilityFunctions<int>::printVector(vec);
-    auto uniqueVec = UtilityFunctions<int>::getUniqueElements(vec);
-    bool hasDups = UtilityFunctions<int>::hasDuplicates(uniqueVec);
-    
-    std::cout << "Unique elements: ";
-    UtilityFunctions<int>::printVector(uniqueVec);
-    std::cout << "Has duplicates: " << hasDups << '\n';
-    
-    return 0;
+void printVector(const std::vector<T>& v) {
+    std::cout << "[ ";
+    std::for_each(v.begin(), v.end(), [](const auto& elem){ std::cout << elem << ' '; });
+    std::cout << " ]\n";
 }
+
+// Get unique elements from a vector
+template <typename T>
+std::vector<T> getUniqueElements(const std::vector<T>& v) {
+    if (v.empty()) {
+        return {};
+    }
+
+    std::vector<T> result;
+    result.reserve(v.size());
+
+    std::set<T> seen;
+    for (const auto& elem : v) {
+        if (seen.insert(elem).second) {
+            result.push_back(elem);
+        }
+    }
+
+    return result;
+}
+
+// Check if a vector contains any duplicates
+template <typename T>
+bool hasDuplicates(const std::vector<T>& v) {
+    if (v.empty()) {
+        return false;
+    }
+
+    std::set<T> seen;
+    for (const auto& elem : v) {
+        if (!seen.insert(elem).second) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+} // namespace util
