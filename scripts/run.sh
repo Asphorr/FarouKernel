@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e # Exit on first error
 
 # Project settings
 PROJECT_NAME="funicod"
@@ -25,33 +26,51 @@ SOURCES=(main.c utils.c)
 OBJECTS=(${SOURCES[@]:%.*}.o)
 
 # Build the objects
+echo "Building the objects..."
 $CC $CFLAGS ${SOURCES[*]} -o ${OBJECTS[*]}
 
 # Build the executables
+echo "Building the executables..."
 $CXX $CXXFLAGS main.cpp utils.cpp -o $PROJECT_NAME
 
 # Link the objects
+echo "Linking the objects..."
 $LD $OBJECTS $LIBS -o $PROJECT_NAME
 
 # Run the executable
-./$PROJECT_NAME
+echo "Running the executable..."
+if [ -f ./$PROJECT_NAME ]; then
+    ./$PROJECT_NAME
+else
+    echo "Executable $PROJECT_NAME not found. Exiting."
+    exit 1
+fi
 
 # Wait for the user to press Enter
 read -p "Press Enter to continue... "
 
 # Run the test cases
 echo "Running test cases..."
-./test_cases.sh
+if [ -f ./test_cases.sh ]; then
+    ./test_cases.sh
+else
+    echo "Test cases script not found. Skipping."
+fi
 
 # Wait for the user to press Enter again
 read -p "Press Enter to continue... "
 
 # Run the benchmark
 echo "Running benchmark..."
-./benchmark.sh
+if [ -f ./benchmark.sh ]; then
+    ./benchmark.sh
+else
+    echo "Benchmark script not found. Skipping."
+fi
 
 # Wait for the user to press Enter again
 read -p "Press Enter to continue... "
 
 # Clean up
-rm -f ${OBJECTS[*]} $PROJECT_NAME
+echo "Cleaning up..."
+trap 'rm -f ${OBJECTS[*]} $PROJECT_NAME' EXIT
