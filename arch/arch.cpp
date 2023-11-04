@@ -3,9 +3,10 @@
 #include <numeric>
 #include <algorithm>
 #include <functional>
+#include <limits>
 
 // Define a type alias for the accumulator function
-using AccumulatorFunc = std::plus<>();
+using AccumulatorFunc = std::plus<>;
 
 // Implement the SumFirstKElements concept
 template <typename T>
@@ -52,25 +53,35 @@ concept bool MeanValue = requires(T x, T y) {
 // Implement the mean_value method for the MeanValue concept
 template <MeanValue T>
 constexpr auto mean_value(T begin, T end) {
-    return std::mean_value(begin, end);
+    return std::accumulate(begin, end, 0.0) / std::distance(begin, end);
 }
 
 int main() {
     // Read input from stdin
     int n;
-    std::cin >> n;
+    std::cout << "Enter the number of elements: ";
+    while (!(std::cin >> n) || n <= 0) {
+        std::cout << "Please enter a positive integer: ";
+        std::cin.clear();
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    }
     
     // Create vector of integers
     std::vector<int> numbers(n);
     for (auto& num : numbers) {
-        std::cin >> num;
+        std::cout << "Enter a number: ";
+        while (!(std::cin >> num)) {
+            std::cout << "Please enter an integer: ";
+            std::cin.clear();
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        }
     }
     
     // Sort the vector in descending order
     std::sort(numbers.rbegin(), numbers.rend());
     
     // Calculate sum of first k elements
-    constexpr size_t k = n / 2;
+    size_t k = n / 2;
     long long sum = apply(numbers.begin(), numbers.end(), k);
     
     // Find maximum element
@@ -83,7 +94,10 @@ int main() {
     double mean = mean_value(numbers.begin(), numbers.end());
     
     // Print results
-    std::cout << "sum: " << sum << ", max: " << *max_it << ", min: " << *min_it << ", mean: " << mean << "\n";
+    std::cout << "Sum of first " << k << " elements: " << sum << "\n";
+    std::cout << "Maximum element: " << *max_it << "\n";
+    std::cout << "Minimum element: " << *min_it << "\n";
+    std::cout << "Mean value: " << mean << "\n";
     
     return 0;
 }
