@@ -9,6 +9,8 @@
 #include <memory>
 #include <concepts>
 #include <type_traits>
+#include <vector>
+#include <algorithm>
 
 // Define a concept for the kernel class
 template <typename T>
@@ -67,36 +69,8 @@ public:
         m_cv.wait(lock, [this]{ return m_stopRequested; });
     }
 
-private:
-    // Member variables
-    std::string m_name;
-    int m_major;
-    int m_minor;
-    std::string m_releaseDate;
-    std::string m_buildTime;
-    std::string m_author;
-    std::string m_copyright;
-    std::string m_license;
-    std::string m_description;
-    bool m_running = false;
-    bool m_stopped = false;
-    bool m_stopRequested = false;
-    mutable std::mutex m_mutex;
-    std::condition_variable m_cv;
-};
-
-int main() {
-    // Create a kernel instance
-    Kernel kernel("My First Kernel", 1, 0, "2023-09-28", "14:30:00", "Mikhail", "Copyright (C) 2023 Mikhail", "MIT License", "A simple kernel for learning purposes");
-
     // Start the kernel
-    kernel.start();
+    void start() {
+        m_running = true;
+        m_stopped = false;
 
-    // Wait for user input before stopping the kernel
-    std::cin.get();
-
-    // Stop the kernel
-    kernel.stop();
-
-    return 0;
-}
