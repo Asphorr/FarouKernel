@@ -7,79 +7,65 @@
 #include <numeric>
 #include <execution>
 
-// Define a struct to store key-value pairs
 struct KeyValuePair {
-    std::string key;
-    int value;
+   std::string key;
+   int value;
 };
 
-// Implement a custom comparator for sorting by value
 struct ValueComparator {
-    bool operator()(const KeyValuePair& lhs, const KeyValuePair& rhs) const {
-        return lhs.value < rhs.value;
-    }
+   bool operator()(const KeyValuePair& lhs, const KeyValuePair& rhs) const {
+       return lhs.value < rhs.value;
+   }
 };
 
-// Function to read data from a file and store it in a vector of key-value pairs
-std::vector<KeyValuePair> readDataFromFile(const char* filename) {
-    std::ifstream input(filename);
-    std::vector<KeyValuePair> data;
-    
-    // Read data from file and push it onto the vector
-    std::string line;
-    while (std::getline(input, line)) {
-        auto keyValuePair = splitLineIntoKeyAndValue(line);
-        data.push_back({keyValuePair.first, stoi(keyValuePair.second)});
-    }
-    
-    return data;
+std::map<std::string, int> readDataFromFile(const char* filename) {
+   std::ifstream input(filename);
+   if (!input.is_open()) {
+       std::cerr << "Could not open file: " << filename << std::endl;
+       return {};
+   }
+
+   std::map<std::string, int> data;
+   std::string line;
+   while (std::getline(input, line)) {
+       auto keyValuePair = splitLineIntoKeyAndValue(line);
+       data[keyValuePair.first] = stoi(keyValuePair.second);
+   }
+   input.close();
+   return data;
 }
 
-// Function to process data stored in a vector of key-value pairs
-void processData(std::vector<KeyValuePair>& data) {
-    // Sort the data based on the values
-    std::sort(data.begin(), data.end(), ValueComparator());
-    
-    // Iterate over the sorted data and update the values
-    for (size_t i = 0; i < data.size(); ++i) {
-        auto& pair = data[i];
-        
-        // Check if the current value is greater than 10
-        if (pair.value > 10) {
-            // Multiply the value by 2
-            pair.value *= 2;
-            
-            // Update the corresponding key
-            pair.key += "_doubled";
-        } else {
-            // Divide the value by 2
-            pair.value /= 2;
-            
-            // Update the corresponding key
-            pair.key += "_halved";
-        }
-    }
+void processData(std::map<std::string, int>& data) {
+   std::transform(data.begin(), data.end(), data.begin(),
+       [](auto& pair) {
+           if (pair.second > 10) {
+               pair.second *= 2;
+               pair.first += "_doubled";
+           } else {
+               pair.second /= 2;
+               pair.first += "_halved";
+           }
+           return pair;
+       });
 }
 
-// Function to write processed data to a file
-void writeOutputToFile(const char* filename, const std::vector<KeyValuePair>& data) {
-    std::ofstream output(filename);
-    
-    // Write the processed data to the file
-    for (const auto& pair : data) {
-        output << pair.key << ": " << pair.value << "\n";
-    }
+void writeOutputToFile(const char* filename, const std::map<std::string, int>& data) {
+   std::ofstream output;
+   output.open(filename);
+   if (!output.is_open()) {
+       std::cerr << "Could not open file: " << filename << std::endl;
+       return;
+   }
+
+   for (const auto& pair : data) {
+       output << pair.first << ": " << pair.second << "\n";
+   }
+   output.close();
 }
 
 int main() {
-    // Read data from a file and store it in a vector of key-value pairs
-    std::vector<KeyValuePair> data = readDataFromFile("input.txt");
-    
-    // Process the data
-    processData(data);
-    
-    // Write the processed data to a file
-    writeOutputToFile("output.txt", data);
-    
-    return 0;
+   std::map<std::string, int> data = readDataFromFile("input.txt");
+   processData(data);
+   writeOutputToFile("output.txt", data);
+   return 0;
 }
