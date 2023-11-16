@@ -202,26 +202,6 @@ static_assert(psd2.foo == 0 && psd2.bar == 0);
 static_assert(pis2.instructions[0] == '\x0f');
 static_assert(psdfn2.fn() == nullptr);
 
-// Add more methods to the classes
-class ArchitectureDefinitions {
-public:
-  static constexpr auto kIsa = Isa::X86_64;
-  static constexpr auto kEndianness = Endianness::Little;
-  static constexpr auto kWordSize = sizeof(uint64_t);
-  void setIsa(Isa isa);
-  void setEndianness(Endianness endianness);
-  void setWordSize(size_t wordSize);
-};
-
-class AddressSpaceLayout {
-public:
-  static constexpr auto kAslr = true;
-  void setAslr(bool aslr);
-};
-
-// ... and so on for the other classes
-
-// Call the methods in the main() function
 int main() {
   ArchitectureDefinitions arch{};
   arch.setIsa(Isa::ARM);
@@ -229,9 +209,7 @@ int main() {
   arch.setWordSize(sizeof(uint32_t));
 
   AddressSpaceLayout addrspace{};
-  addrspace.setAslr(false);
-
-  // ... and so on for the other classes
+  addrspace.setAslr(false)
 
   return 0;
 }
