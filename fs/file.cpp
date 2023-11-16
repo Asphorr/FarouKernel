@@ -1,109 +1,86 @@
+#include "file.h"
 #include <iostream>
-#include <fstream>
-#include <memory>
 #include <stdexcept>
-#include <type_traits>
 
-// Concepts for readable and writable types
-template <typename T>
-concept WritableType = requires(T t) {
-    { t.write(std::declval<char[]>(), std::declval<size_t>())} -> std::same_as<void>;
-};
+File::File(const std::string& filename) : _filename(filename), _isOpen(false) {}
 
-template <typename T>
-concept ReadableType = requires(T t) {
-    { t.read(std::declval<char[]>(), std::declval<size_t>())} -> std::same_as<void>;
-};
+File::~File() { 
+   if (_isOpen) {
+       close();
+   }
+}
 
-// A class representing a file
-class File {
-public:
-    // Open the file for reading and writing
-    explicit File(const std::string& filename) : _filename(filename), _isOpen(false) {}
+bool File::isOpen() const { 
+   return _isOpen; 
+}
 
-    // Close the file before destruction
-    virtual ~File() { close(); }
+bool File::open() {
+   if (_isOpen) {
+       return true;
+   }
 
-    // Check if the file is open
-    bool isOpen() const { return _isOpen; }
+   try {
+       _fileStream = std::make_unique<std::ofstream>(_filename, std::ios::in | std::ios::out | std::ios::binary);
+       if (!_fileStream->good()) {
+           throw std::runtime_error("Failed to open file");
+       }
+   } catch (const std::exception& e) {
+       std::cerr << "Error opening file: " << e.what() << '\n';
+       return false;
+   }
 
-    // Open the file for reading and writing
-    bool open() {
-        if (_isOpen) {
-            return true;
-        }
+   _isOpen = true;
+   return true;
+}
 
-        try {
-            _fileStream = std::make_unique<std::ofstream>(_filename, std::ios::in | std::ios::out | std::ios::binary);
-            if (!_fileStream->good()) {
-                throw std::runtime_error("Failed to open file");
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "Error opening file: " << e.what() << '\n';
-            return false;
-        }
+void File::close() {
+   if (_isOpen) {
+       _fileStream->close();
+       _isOpen = false;
+   }
+}
 
-        _isOpen = true;
-        return true;
-    }
+template <WritableType T>
+bool File::write(const T& value) {
+   if (!_isOpen) {
+       return false;
+   }
 
-    // Close the file
-    void close() {
-        if (_isOpen) {
-            _fileStream->close();
-            _isOpen = false;
-        }
-    }
+   size_t numBytes = sizeof(T);
+   char buffer[numBytes];
 
-    // Write data to the file
-    template <WritableType T>
-    bool write(const T& value) {
-        if (!_isOpen) {
-            return false;
-        }
+   try {
+       _fileStream->write(buffer, numBytes);
+       if (!_fileStream->good()) {
+           throw std::runtime_error("Failed to write to file");
+       }
+   } catch (const std::exception& e) {
+       std::cerr << "Error writing to file: " << e.what() << '\n';
+       return false;
+   }
 
-        size_t numBytes = sizeof(T);
-        char buffer[numBytes];
+   return true;
+}
 
-        try {
-            _fileStream->write(buffer, numBytes);
-            if (!_fileStream->good()) {
-                throw std::runtime_error("Failed to write to file");
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "Error writing to file: " << e.what() << '\n';
-            return false;
-        }
+template <ReadableType T>
+bool File::read(T& value) {
+   if (!_isOpen) {
+       return false;
+   }
 
-        return true;
-    }
+   size_t numBytes = sizeof(T);
+   char buffer[numBytes];
 
-    // Read data from the file
-    template <ReadableType T>
-    bool read(T& value) {
-        if (!_isOpen) {
-            return false;
-        }
+   try {
+       _fileStream->read(buffer, numBytes);
+       if (!_fileStream->good()) {
+           throw std::runtime_error("Failed to read from file");
+       }
+   } catch (const std::exception& e) {
+       std::cerr << "Error reading from file: " << e.what() << '\n';
+       return false;
+   }
 
-        size_t numBytes = sizeof(T);
-        char buffer[numBytes];
-
-        try {
-            _fileStream->read(buffer, numBytes);
-            if (!_fileStream->good()) {
-                throw std::runtime_error("Failed to read from file");
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "Error reading from file: " << e.what() << '\n';
-            return false;
-        }
-
-        memcpy(&value, buffer, numBytes);
-        return true;
-    }
-
-private:
-    std::string _filename;
-    std::unique_ptr<std::ofstream> _fileStream;
-    bool _isOpen;
-};
+   memcpy(&value, buffer, numBytes);
+   return true;
+}
