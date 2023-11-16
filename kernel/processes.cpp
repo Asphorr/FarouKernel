@@ -8,22 +8,27 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <thread>
+#include <future>
 
 std::vector<std::pair<pid_t, int>> process_pids; // Each process is a pair of PID and priority
 
 pid_t create_process(std::function<void()> func, int priority) {
  pid_t pid = fork();
  if (pid == 0) {
-    // Child process
-    func();
-    exit(0);
+  // Child process
+  func();
+  exit(0);
  } else if (pid < 0) {
-    // Error occurred
-    throw std::runtime_error("Failed to create process");
+  // Error occurred
+  perror("Failed to create process");
+  throw std::runtime_error("Failed to create process");
  } else {
-    // Parent process
-    process_pids.push_back(std::make_pair(pid, priority));
-    return pid;
+  // Parent process
+  process_pids.push_back(std::make_pair(pid, priority));
+  return pid;
  }
 }
 
@@ -39,7 +44,7 @@ void add_process(std::function<void()> func, int priority) {
 
 void wait_all_processes() {
  for (auto& pid : process_pids) {
-   wait_for_process(pid.first);
+ wait_for_process(pid.first);
  }
 }
 
@@ -54,11 +59,23 @@ void terminate_process(pid_t pid) {
 }
 
 void execute_command(const char* command) {
- system(command);
+  char* args[] = {(char*)command, NULL};
+  if (fork() == 0) {
+      execvp(command, args);
+      perror("exec failed");
+      exit(EXIT_FAILURE);
+  }
 }
 
 void set_signal_handler(int signal, void (*handler)(int)) {
- signal(signal, handler);
+  struct sigaction sa;
+  sa.sa_handler = handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  if (sigaction(signal, &sa, NULL) == -1) {
+      perror("sigaction");
+      exit(EXIT_FAILURE);
+  }
 }
 
 void create_process_group(pid_t pid) {
@@ -67,4 +84,18 @@ void create_process_group(pid_t pid) {
 
 void join_process_group(pid_t pid) {
  setpgid(getpid(), pid);
+}
+
+// New function using multithreading
+void add_process_mt(std::function<void()> func, int priority) {
+ std::thread t(func);
+ t.detach();
+ process_pids.push_back(std::make_pair(t.native_handle(), priority));
+}
+
+// New function using function overloading
+void add_process(std::function<void(int)> func, int priority, int arg) {
+ std::thread t(func, arg);
+ t.detach();
+ process_pids.push_back(std::make_pair(t.native_handle(), priority));
 }
