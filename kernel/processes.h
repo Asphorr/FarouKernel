@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include <functional>
 #include <filesystem>
+#include <optional>
 
 namespace ProcessManagement {
 
@@ -30,26 +30,26 @@ struct ProcessInfo {
 
 using ProcessMap = std::unordered_map<int, ProcessInfo>;
 
-void getProcesses(ProcessMap &processes);
-bool addProcess(const char *name, const char *commandLineArgs[]);
+std::optional<ProcessMap> getProcesses();
+bool addProcess(std::string_view name, const std::vector<std::string>& commandLineArgs);
 bool removeProcess(int pid);
 bool terminateProcess(int pid);
-unsigned long long getCPUTime(int pid);
-unsigned long long getWallClockTime(int pid);
-int getParentProcess(int pid);
-std::vector<int> getChildProcesses(int pid);
-unsigned long long getMemoryUsage(int pid);
-int getPriority(int pid);
-int getStatus(int pid);
-int getNumThreads(int pid);
-std::vector<std::string> getCommandLineArgs(int pid);
-std::filesystem::path getWorkingDirectory(int pid);
-std::unordered_map<std::string, std::string> getEnvironmentVariables(int pid);
+std::optional<unsigned long long> getCPUTime(int pid);
+std::optional<unsigned long long> getWallClockTime(int pid);
+std::optional<int> getParentProcess(int pid);
+std::optional<std::vector<int>> getChildProcesses(int pid);
+std::optional<unsigned long long> getMemoryUsage(int pid);
+std::optional<int> getPriority(int pid);
+std::optional<int> getStatus(int pid);
+std::optional<int> getNumThreads(int pid);
+std::optional<std::vector<std::string>> getCommandLineArgs(int pid);
+std::optional<std::filesystem::path> getWorkingDirectory(int pid);
+std::optional<std::unordered_map<std::string, std::string>> getEnvironmentVariables(int pid);
 void setPriority(int pid, int priority);
 void setStatus(int pid, int status);
 void setNumThreads(int pid, int numThreads);
 void setParentProcess(int pid, int parentProcess);
-void setChildProcesses(int pid, std::vector<int> childProcesses);
+void setChildProcesses(int pid, const std::vector<int>& childProcesses);
 void setMemoryUsage(int pid, unsigned long long memoryUsage);
 
 } // namespace ProcessManagement
