@@ -20,7 +20,37 @@ struct CpuIdInfo {
 
 // Define a function to get CPUID information from the processor
 [[gnu::always_inline]] inline void get_cpuid(CpuIdInfo& info) {
-    // Implementation left as an exercise for the reader
+    uint32_t eax, ebx, ecx, edx;
+
+    // Call CPUID with EAX=0 to get the highest supported function parameter
+    asm volatile("cpuid"
+                 : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                 : "a"(0));
+
+    // Store the vendor ID
+    info.vendorId = ebx;
+    info.deviceId = edx;
+    info.revision = ecx;
+
+    // Call CPUID with EAX=1 to get the feature information
+    asm volatile("cpuid"
+                 : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                 : "a"(1));
+
+    // Store the feature information
+    info.features = edx;
+
+    // Check for instruction set support
+    if (ecx & (1 << 25)) {
+        info.instructionSets.set(0);  // SSE
+    }
+    if (ecx & (1 << 26)) {
+        info.instructionSets.set(1);  // SSE2
+    }
+    if (ecx & (1 << 28)) {
+        info.instructionSets.set(2);  // SSE3
+    }
+    // Add more checks for other instruction sets as needed
 }
 
 // Define a function to print out CPUID information
