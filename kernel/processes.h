@@ -32,16 +32,12 @@ using ProcessMap = std::unordered_map<int, ProcessInfo>;
 
 class ProcessManager {
 public:
-    // Use std::optional to indicate that the function might not return a value
+    // New functions
     std::optional<ProcessInfo> getProcessInfo(int pid);
     std::optional<ProcessMap> getProcesses();
-
-    // Use std::string_view for name to avoid unnecessary copying
     bool addProcess(std::string_view name, const std::vector<std::string>& commandLineArgs);
     bool removeProcess(int pid);
     bool terminateProcess(int pid);
-
-    // Use std::optional to indicate that the function might not return a value
     std::optional<unsigned long long> getCPUTime(int pid);
     std::optional<unsigned long long> getWallClockTime(int pid);
     std::optional<int> getParentProcess(int pid);
@@ -53,14 +49,24 @@ public:
     std::optional<std::vector<std::string>> getCommandLineArgs(int pid);
     std::optional<std::filesystem::path> getWorkingDirectory(int pid);
     std::optional<std::unordered_map<std::string, std::string>> getEnvironmentVariables(int pid);
-
-    // Use void for setters as they don't return anything
     void setPriority(int pid, int priority);
     void setStatus(int pid, int status);
     void setNumThreads(int pid, int numThreads);
     void setParentProcess(int pid, int parentProcess);
     void setChildProcesses(int pid, const std::vector<int>& childProcesses);
     void setMemoryUsage(int pid, unsigned long long memoryUsage);
+
+    // New declarations
+    bool suspendProcess(int pid);
+    bool resumeProcess(int pid);
+    std::optional<std::string> getProcessOwner(int pid);
+    void setProcessOwner(int pid, const std::string& owner);
+    std::optional<time_t> getProcessStartTime(int pid);
+    void setProcessStartTime(int pid, time_t startTime);
+    std::optional<time_t> getProcessEndTime(int pid);
+    void setProcessEndTime(int pid, time_t endTime);
+    void setProcessRunning(int pid, bool running);
+    bool isProcessRunning(int pid);
 
 private:
     ProcessMap processMap;
