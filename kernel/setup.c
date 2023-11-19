@@ -16,11 +16,10 @@
 using StringVectorPtr = std::unique_ptr<std::vector<std::string>>;
 
 // Define a function template to convert a string literal to a vector of strings
-template <typename T>
-StringVectorPtr split(T&& str) {
+StringVectorPtr split(std::string_view str) {
     // Split the input string into words
     auto words = std::make_unique<std::vector<std::string>>();
-    std::istringstream iss(str);
+    std::istringstream iss(str.data());
     std::copy(std::istream_iterator<std::string>(iss),
               std::istream_iterator<std::string>(),
               std::back_inserter(*words));
@@ -83,16 +82,16 @@ void handleTiming(const std::chrono::duration<double>& duration) {
 int main(int argc, char** argv) {
     try {
         // Parse command line arguments
-        auto args = split(argc > 0 ? argv[0] : ""sv);
+        std::vector<std::string> args(argv, argv + argc);
 
         // Retrieve the system call table
         auto syscalls = getSystemCalls();
 
         // Set up the program environment
-        setupEnvironment(*args);
+        setupEnvironment(args);
 
         // Start the program
-        startProgram(*args, *syscalls);
+        startProgram(args, *syscalls);
 
         // Wait for the program to finish
         waitForProgramToFinish();
