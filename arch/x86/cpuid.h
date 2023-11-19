@@ -10,12 +10,19 @@ typedef struct {
   uint32_t edx;
 } cpuid_t;
 
+static cpuid_t cached_info;
+static int cached_function = -1;
+
 void cpuid(cpuid_t *info, uint32_t function) {
-  __asm__ __volatile__ (
-      "cpuid;"
-      : "=a"(info->eax), "=b"(info->ebx), "=c"(info->ecx), "=d"(info->edx)
-      : "a"(function), "c"(0)
-  );
+  if (cached_function != function) {
+    __asm__ __volatile__ (
+        "cpuid;"
+        : "=a"(cached_info.eax), "=b"(cached_info.ebx), "=c"(cached_info.ecx), "=d"(cached_info.edx)
+        : "a"(function), "c"(0)
+    );
+    cached_function = function;
+  }
+  *info = cached_info;
 }
 
 void cpuid_ex(cpuid_t *info, uint32_t function, uint32_t subfunction) {
