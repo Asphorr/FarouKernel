@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <unordered_map>
 
 typedef enum {
     SSE = 1 << 0,
@@ -44,12 +45,29 @@ struct x86_cpuid {
 
 extern const struct x86_cpuid x86_cpuid;
 
+static std::unordered_map<x86_feature, bool> feature_cache;
+static std::unordered_map<x86_instruction_set, bool> instruction_set_cache;
+
 static inline bool has_feature(x86_feature feature) {
-    return (x86_cpuid.features & feature) != 0;
+    auto it = feature_cache.find(feature);
+    if (it == feature_cache.end()) {
+        bool result = (x86_cpuid.features & feature) != 0;
+        feature_cache[feature] = result;
+        return result;
+    } else {
+        return it->second;
+    }
 }
 
 static inline bool has_instruction_set(x86_instruction_set set) {
-    return (x86_cpuid.instruction_sets[set / 32] & (1U << (set % 32))) != 0;
+    auto it = instruction_set_cache.find(set);
+    if (it == instruction_set_cache.end()) {
+        bool result = (x86_cpuid.instruction_sets[set / 32] & (1U << (set % 32))) != 0;
+        instruction_set_cache[set] = result;
+        return result;
+    } else {
+        return it->second;
+    }
 }
 
 #endif /* X86_H */
