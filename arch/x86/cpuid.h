@@ -2,6 +2,7 @@
 #define CPUID_H
 
 #include <stdint.h>
+#include <unordered_map>
 
 typedef struct {
   uint32_t eax;
@@ -10,19 +11,20 @@ typedef struct {
   uint32_t edx;
 } cpuid_t;
 
-static cpuid_t cached_info;
-static int cached_function = -1;
+std::unordered_map<int, cpuid_t> cache;
 
 void cpuid(cpuid_t *info, uint32_t function) {
-  if (cached_function != function) {
+  auto it = cache.find(function);
+  if (it == cache.end()) {
     __asm__ __volatile__ (
         "cpuid;"
-        : "=a"(cached_info.eax), "=b"(cached_info.ebx), "=c"(cached_info.ecx), "=d"(cached_info.edx)
+        : "=a"(info->eax), "=b"(info->ebx), "=c"(info->ecx), "=d"(info->edx)
         : "a"(function), "c"(0)
     );
-    cached_function = function;
+    cache[function] = *info;
+  } else {
+    *info = it->second;
   }
-  *info = cached_info;
 }
 
 void cpuid_ex(cpuid_t *info, uint32_t function, uint32_t subfunction) {
