@@ -1,0 +1,8 @@
+#ifndef BOOTLOADER_CONFIG_H
+#define BOOTLOADER_CONFIG_H
+
+#define KERNEL_OFFSET 0x1000
+#define SECTOR_SIZE 512
+#define BOOT_DRIVE_NUM 0x80
+
+#endif
