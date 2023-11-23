@@ -1,11 +1,8 @@
-#include "boot.asm"
+#include "bootloader.h"
 
 void main() {
     // Call the assembly functions
     asm("call start");
-    asm("call load_kernel");
-    asm("call switch_to_pm");
-    asm("call start_protected_mode");
 }
 
 void load_kernel() {
