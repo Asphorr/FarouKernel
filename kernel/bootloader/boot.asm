@@ -2,6 +2,7 @@
 
 jmp start
 
+%include "bootloader.h"
 %include "print_string.asm"
 %include "disk_load.asm"
 
@@ -16,35 +17,17 @@ start:
     call print_string
 
     ; Load the kernel from disk
-    mov bx, 0x1000              ; Load the kernel at address 0x1000
-    mov dh, 2                   ; Load 2 sectors (we assume the kernel is that big)
-    mov dl, [BOOT_DRIVE]        ; Load from the boot drive
-    call disk_load
+    call load_kernel
 
     ; Print a message to indicate that we're switching to protected mode
     mov bx, SWITCHING_TO_PM_MSG
     call print_string
 
     ; Switch to protected mode
-    cli                          ; Disable interrupts
-    lgdt [gdt_descriptor]        ; Load the GDT descriptor
-    mov eax, cr0                 ; Set the first bit of CR0 to switch to protected mode
-    or eax, 0x1
-    mov cr0, eax
-    jmp CODE_SEG:start_protected_mode   ; Far jump to our 32-bit code
+    call switch_to_pm
 
-[bits 32]
-start_protected_mode:
-    ; Set up the data segments
-    mov ax, DATA_SEG
-    mov ds, ax
-    mov ss, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-
-    ; Jump to the kernel
-    jmp 0x1000
+    ; Start the kernel
+    call start_protected_mode
 
 ; Include the GDT and other constants
 %include "gdt.asm"
