@@ -11,13 +11,21 @@ template <typename T>
 concept Mallocator = requires (T t) {
     { t.allocate() };
     { t.deallocate() };
+    { t.reallocate() };
 };
 
 // Implement a default mallocator
 class DefaultMallocator {
 public:
-    void allocate();
-    void deallocate();
+    void allocate() {
+        std::cout << "DefaultMallocator::allocate()\n";
+    }
+    void deallocate() {
+        std::cout << "DefaultMallocator::deallocate()\n";
+    }
+    void reallocate() {
+        std::cout << "DefaultMallocator::reallocate()\n";
+    }
 };
 
 // Implement a custom mallocator
@@ -25,8 +33,15 @@ class CustomMallocator {
 public:
     explicit CustomMallocator(const char* name) : name_(name) {}
 
-    void allocate();
-    void deallocate();
+    void allocate() {
+        std::cout << "CustomMallocator::allocate()\n";
+    }
+    void deallocate() {
+        std::cout << "CustomMallocator::deallocate()\n";
+    }
+    void reallocate() {
+        std::cout << "CustomMallocator::reallocate()\n";
+    }
 private:
     const char* name_;
 };
@@ -42,8 +57,7 @@ template <>
 struct IsMallocator<CustomMallocator> : public std::true_type {};
 
 // Define a helper class to wrap around a mallocator
-template <typename T>
-requires IsMallocator<T>::value
+template <Mallocator T>
 class MallocatorWrapper {
 public:
     explicit MallocatorWrapper(T& mallocator) : mallocator_(mallocator) {}
@@ -55,19 +69,23 @@ public:
     void deallocate() {
         mallocator_.deallocate();
     }
+
+    void reallocate() {
+        mallocator_.reallocate();
+    }
 private:
     T& mallocator_;
 };
 
 // Define a helper function to create a unique pointer with a custom delete
-template <typename T>
-auto make_unique_with_custom_delete(const char* name) -> std::unique_ptr<T, MallocatorWrapper<decltype(detail::getMallocator<T>(name))>> {
-    return std::unique_ptr<T, MallocatorWrapper<decltype(detail::getMallocator<T>(name))>>{detail::getMallocator<T>(name).allocate(), MallocatorWrapper<decltype(detail::getMallocator<T>(name))>{}};
+template <typename T, Mallocator M>
+auto make_unique_with_custom_delete(M& mallocator) {
+    return std::unique_ptr<T, MallocatorWrapper<M>>(new T, MallocatorWrapper<M>(mallocator));
 }
 
 int main() {
-    auto defaultAllocator = detail::getMallocator<int>();
-    auto customAllocator = detail::getMallocator<int>("my_mallocator");
+    DefaultMallocator defaultAllocator;
+    CustomMallocator customAllocator("my_mallocator");
 
     auto myUniquePtr = make_unique_with_custom_delete<int>(defaultAllocator);
     auto myOtherUniquePtr = make_unique_with_custom_delete<int>(customAllocator);
