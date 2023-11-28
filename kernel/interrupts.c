@@ -21,15 +21,18 @@ static inline void load_gdt(uintptr_t address) {
 }
 
 static inline void set_vector(uint8_t vector, uintptr_t address) {
-    idt[vector] = (address & 0xFFFFFFFF) | 0x80000000;
+    idt[vector * 8] = address & 0xFF;
+    idt[vector * 8 + 1] = (address >> 8) & 0xFF;
+    idt[vector * 8 + 2] = (address >> 16) & 0xFF;
+    idt[vector * 8 + 3] = (address >> 24) & 0xFF;
 }
 
-static inline void remap_interrupts() {
+static inline void remap_interrupts(void (*handler)(struct interrupt_frame *)) {
     // Remap interrupt vectors to our custom handler
-    set_vector(0x20, (uintptr_t)custom_handler);
-    set_vector(0x21, (uintptr_t)custom_handler + 1);
-    set_vector(0x22, (uintptr_t)custom_handler + 2);
-    set_vector(0x23, (uintptr_t)custom_handler + 3);
+    set_vector(0x20, (uintptr_t)handler);
+    set_vector(0x21, (uintptr_t)handler + 1);
+    set_vector(0x22, (uintptr_t)handler + 2);
+    set_vector(0x23, (uintptr_t)handler + 3);
 }
 
 static inline void enable_interrupts() {
@@ -42,7 +45,7 @@ static inline void disable_interrupts() {
     asm volatile("cli");
 }
 
-static void custom_handler(struct interrupt_frame *frame) {
+void custom_handler(struct interrupt_frame *frame) {
     // Get the interrupt number from the frame
     uint8_t vector = frame->vector;
 
@@ -94,13 +97,14 @@ int main(void) {
     load_gdt((uintptr_t)gdt);
 
     // Remap interrupt vectors to our custom handler
-    remap_interrupts();
+    remap_interrupts(custom_handler);
 
     // Enable interrupts in the CPU
     enable_interrupts();
 
     // Wait forever
     while (true) {
-    // Handle incoming interrupts here
-    asm volatile("sti");
+        // Handle incoming interrupts here
+        asm volatile("sti");
+    }
 }
