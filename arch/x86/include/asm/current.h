@@ -19,10 +19,10 @@ static __always_inline struct task_struct *get_current(void)
 {
     struct task_struct *task;
 
-    preempt_disable();
-    task = percpu_read_begin();
+    preempt_disable_notrace();
+    task = percpu_read_begin_notrace();
     task = percpu_read(current_task);
-    percpu_read_end();
+    percpu_read_end_notrace();
     preempt_enable();
 
     return task;
