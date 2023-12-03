@@ -1,31 +1,24 @@
-# Define the C compiler to use
+# Define the compiler and flags
 CC = gcc
+CFLAGS = -m64 -Wall -Wextra -O2
 
-# Define any compile-time flags
-CFLAGS = -Wall -g
+# Define the object files
+OBJS = setup_64.o head_64.o entry_64.o
 
-# Define any directories containing header files
-INCLUDES = -I./include
+# Define the target
+TARGET = kernel
 
-# Define library paths in addition to /usr/lib
-LFLAGS = -L./lib
+# Define the dependencies
+DEPS = setup_64.h head64.h processor.h desc.h pgtable.h pgtable-64.h pgtable-3level_types.h pgtable-3level.h pgtable-2level_types.h pgtable-2level.h
 
-# Define any libraries to link into executable
-LIBS = -lm
+# Define the rules
+all: $(TARGET)
 
-# Define the C source files
-SRCS = $(wildcard ./src/*.c)
-
-# Define the executable file 
-MAIN = arch
-
-.PHONY: clean
-
-all: $(MAIN)
-   @echo Program has been compiled
-
-$(MAIN): $(OBJS) 
-   $(CC) $(CFLAGS) $(INCLUDES) -o $(MAIN) $(SRCS) $(LFLAGS) $(LIBS)
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-   $(RM) *.o *~ $(MAIN)
+	rm -f $(OBJS) $(TARGET)
+
+# Include the dependency files
+-include $(DEPS)
