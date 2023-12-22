@@ -159,11 +159,6 @@ void print_string(const char* str) {
     }
 }
 
-int init_memory_manager() {
-    // Initialize your memory manager here
-    // Return 0 on success, -1 on failure
-}
-
 int register_system_calls() {
     // Register your system calls here
     // Return 0 on success, -1 on failure
