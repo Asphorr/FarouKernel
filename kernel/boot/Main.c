@@ -22,8 +22,33 @@ void* allocate_memory(size_t size) {
 }
 
 void deallocate_memory(void* ptr) {
-    // In a real memory manager, you would need to implement this
-    // For simplicity, we're not going to do anything here
+  free(*ptr);
+  *ptr = NULL;
+}
+
+int main() {
+   // Declare a void pointer
+   void* ptr;
+
+   // Allocate memory for an integer
+   ptr = malloc(sizeof(int));
+
+   // Check if memory allocation was successful
+   if (ptr == NULL) {
+       std::cout << "Memory allocation failed!" << std::endl;
+       return 1;
+   }
+
+   // Cast void pointer to int pointer and assign a value
+   int* intPtr = static_cast<int*>(ptr);
+   *intPtr = 10;
+
+   // Print the value
+   std::cout << "Value: " << *intPtr << std::endl;
+
+   // Deallocate the memory
+   deallocate_memory(&ptr);
+    
 }
 
 void kernel_main(void) {
