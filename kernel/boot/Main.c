@@ -3,10 +3,9 @@
 #include <iostream>
 #include <cstdlib>
 
-#define VIDEO_MEMORY 0xb8000
-#define WHITE_ON_BLACK 0x0f
-
-#define MEMORY_SIZE 1024 // 1KB of memory
+const uintptr_t VIDEO_MEMORY = 0xb8000;
+const uint8_t WHITE_ON_BLACK = 0x0f;
+const size_t MEMORY_SIZE = 1024; // 1KB of memory
 
 uint8_t memory[MEMORY_SIZE];
 
@@ -128,8 +127,18 @@ void kernel_main(void) {
   deallocate_memory(ptr);
 }
     
-    if (!init_memory_manager()) {
-        // Handle error
+    try {
+  if (!init_memory_manager()) {
+      // Handle error
+  }
+} catch (const std::runtime_error& e) {
+  // Log the error message
+  std::cerr << "Error: " << e.what() << std::endl;
+  // Handle the error appropriately
+  // For example, you might want to terminate the program
+  exit(EXIT_FAILURE);
+    }
+        
     }
 
     // Register system calls
