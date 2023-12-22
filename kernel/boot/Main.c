@@ -127,9 +127,6 @@ void kernel_main(void) {
 
   deallocate_memory(ptr);
 }
-
-
-
     
     if (!init_memory_manager()) {
         // Handle error
