@@ -158,8 +158,73 @@ void print_string(const char* str) {
         vidmem[i*2+1] = WHITE_ON_BLACK; // attributes
     }
 }
+// Structure for our message queue
+struct msgbuf {
+  long mtype;
+  char mtext[80];
+};
 
 int register_system_calls() {
-    // Register your system calls here
-    // Return 0 on success, -1 on failure
+  // Define the file path
+  const char* file_path = "/path/to/your/file";
+
+  // Open the file
+  int fd = open(file_path, O_RDONLY);
+  if (fd == -1) {
+      perror("Failed to open the file");
+      return -1;
+  }
+
+  // Read data from the file
+  char buffer[100];
+  ssize_t bytesRead = read(fd, buffer, sizeof(buffer) - 1);
+  if (bytesRead == -1) {
+      perror("Failed to read the file");
+      close(fd);
+      return -1;
+  }
+
+  // Null terminate the buffer
+  buffer[bytesRead] = '\0';
+
+  // Generate a unique key for our message queue
+  key_t key = ftok("progfile", 65);
+  int msgid = msgget(key, 0666 | IPC_CREAT);
+  if (msgid == -1) {
+      perror("Failed to create message queue");
+      return -1;
+  }
+
+  // Send the file content as a message to the queue
+  struct msgbuf message;
+  message.mtype = 1;
+  strncpy(message.mtext, buffer, sizeof(message.mtext));
+
+  if (msgsnd(msgid, &message, sizeof(message), 0) == -1) {
+      perror("Failed to send message");
+      return -1;
+  }
+
+  // Receive a message from the queue
+  if (msgrcv(msgid, &message, sizeof(message), 1, 0) == -1) {
+      perror("Failed to receive message");
+      return -1;
+  }
+
+  // Print the received message
+  printf("Received message: %s\n", message.mtext);
+
+  // Remove the message queue
+  if (msgctl(msgid, IPC_RMID, NULL) == -1) {
+      perror("Failed to remove message queue");
+      return -1;
+  }
+
+  // Close the file
+  if (close(fd) == -1) {
+      perror("Failed to close the file");
+      return -1;
+  }
+
+  return 0;
 }
