@@ -53,7 +53,93 @@ enum class Register {
    ES,
    FS,
    GS,
-   // Add more registers here
+   // Add more general-purpose registers
+   R16,
+   R17,
+   R18,
+   R19,
+   R20,
+   R21,
+   R22,
+   R23,
+   R24,
+   R25,
+   R26,
+   R27,
+   R28,
+   R29,
+   R30,
+   R31,
+   // Add more segment registers
+   HS,
+   // Add more control registers
+   CR0,
+   CR1,
+   CR2,
+   CR3,
+   CR4,
+   CR8,
+   // Add more debug registers
+   DR0,
+   DR1,
+   DR2,
+   DR3,
+   DR4,
+   DR5,
+   DR6,
+   DR7,
+   // Add more floating-point registers
+   ST0,
+   ST1,
+   ST2,
+   ST3,
+   ST4,
+   ST5,
+   ST6,
+   ST7,
+   // Add more MMX registers
+   MM0,
+   MM1,
+   MM2,
+   MM3,
+   MM4,
+   MM5,
+   MM6,
+   MM7,
+   // Add more XMM registers
+   XMM0,
+   XMM1,
+   XMM2,
+   XMM3,
+   XMM4,
+   XMM5,
+   XMM6,
+   XMM7,
+   XMM8,
+   XMM9,
+   XMM10,
+   XMM11,
+   XMM12,
+   XMM13,
+   XMM14,
+   XMM15,
+   // Add more YMM registers
+   YMM0,
+   YMM1,
+   YMM2,
+   YMM3,
+   YMM4,
+   YMM5,
+   YMM6,
+   YMM7,
+   YMM8,
+   YMM9,
+   YMM10,
+   YMM11,
+   YMM12,
+   YMM13,
+   YMM14,
+   YMM15
 };
 
 // Define the x86_64 instructions
@@ -83,21 +169,4 @@ enum class Instruction {
    PUSH,
    POP,
    NOP,
-   // Add more instructions here
-};
-
-// Define the x86_64 flags
-enum class Flag {
-   CF, // Carry Flag
-   PF, // Parity Flag
-   AF, // Auxiliary Carry Flag
-   ZF, // Zero Flag
-   SF, // Sign Flag
-   TF, // Trap Flag
-   IF, // Interrupt Enable Flag
-   DF, // Direction Flag
-   OF, // Overflow Flag
-   // Add more flags here
-};
-
-#endif // ARCH_X86_64_HPP
+   // Add more arithmetic
