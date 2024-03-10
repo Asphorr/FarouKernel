@@ -5,90 +5,65 @@
 #include <vector>
 #include <filesystem>
 #include <fstream>
-#include <algorithm>
+#include <iostream>
 
 namespace DirFunctions {
 
-void createDirectoryAndWriteToFile(const std::filesystem::path& dirPath, const std::vector<std::string>& data, std::filesystem::perms perms = std::filesystem::perms::all) {
-    if (!std::filesystem::exists(dirPath)) {
-        if (!std::filesystem::create_directory(dirPath)) {
-            throw std::runtime_error("Failed to create directory");
-        }
-    }
+void CreateDirectoryAndWriteToFile(const std::string& dirPathStr, const std::vector<std::string>& data, std::filesystem::perms perms = std::filesystem::perms::all) {
+    std::filesystem::path dirPath(dirPathStr);
+    std::filesystem::create_directories(dirPath);
     std::filesystem::path filePath = dirPath / "data.txt";
-    std::ofstream file(filePath, std::ios::app);
+    std::ofstream file(filePath, std::ios::out | std::ios::app); // Open for writing at the end of the file
     if (!file) {
-        throw std::runtime_error("Failed to open file for writing");
+        throw std::runtime_error("Failed to open file for writing: " + filePath.string());
     }
-    for (const auto& line : data) {
-        file << line << std::endl;
+    for (const std::string& line : data) {
+        file << line << '\n'; // Using '\n' for possibly better performance than std::endl
     }
-    file.close();
     std::filesystem::permissions(filePath, perms);
 }
 
-// ...
-
-void deleteEmptyDirectory(const std::filesystem::path& dirPath, bool deleteNonEmpty = false) {
-    if (std::filesystem::exists(dirPath) && (!deleteNonEmpty || std::filesystem::is_empty(dirPath))) {
-        if (!std::filesystem::remove(dirPath)) {
-            throw std::runtime_error("Failed to delete directory");
-        }
+void DeleteDirectory(const std::string& dirPathStr, bool deleteNonEmpty = false) {
+    std::filesystem::path dirPath(dirPathStr);
+    if (std::filesystem::exists(dirPath) && (deleteNonEmpty || std::filesystem::is_empty(dirPath))) {
+        std::filesystem::remove_all(dirPath);
     }
 }
 
-// ...
-
-void copyDirectory(const std::filesystem::path& sourcePath, const std::filesystem::path& destinationPath, bool copySelf = false) {
-    if (std::filesystem::exists(sourcePath) && std::filesystem::is_directory(sourcePath)) {
-        if (copySelf) {
-            if (!std::filesystem::copy(sourcePath, destinationPath / sourcePath.filename(), std::filesystem::copy_options::recursive)) {
-                throw std::runtime_error("Failed to copy directory");
-            }
-        } else {
-            if (!std::filesystem::copy(sourcePath, destinationPath, std::filesystem::copy_options::recursive)) {
-                throw std::runtime_error("Failed to copy directory");
-            }
-        }
+void CopyDirectory(const std::string& sourcePathStr, const std::string& destinationPathStr, bool copySelf = false) {
+    std::filesystem::path sourcePath(sourcePathStr);
+    std::filesystem::path destinationPath(destinationPathStr);
+    if (copySelf) {
+        destinationPath /= sourcePath.filename();
     }
+    std::filesystem::copy(sourcePath, destinationPath, std::filesystem::copy_options::recursive);
 }
 
-// ...
-
-std::vector<std::filesystem::path> getAllFilesInDir(const std::filesystem::path& dirPath, bool fullPath = false) {
-    std::vector<std::filesystem::path> files;
-    if (std::filesystem::exists(dirPath) && std::filesystem::is_directory(dirPath)) {
-        for (const auto& entry : std::filesystem::directory_iterator(dirPath)) {
-            if (entry.is_regular_file()) {
-                if (fullPath) {
-                    files.push_back(entry.path());
-                } else {
-                    files.push_back(entry.path().filename());
-                }
-            }
+std::vector<std::string> GetAllFilesInDir(const std::string& dirPathStr, bool fullPath = false) {
+    std::filesystem::path dirPath(dirPathStr);
+    std::vector<std::string> files;
+    for (const auto& entry : std::filesystem::directory_iterator(dirPath)) {
+        if (entry.is_regular_file()) {
+            files.push_back(fullPath ? entry.path().string() : entry.path().filename().string());
         }
     }
     return files;
 }
 
-// ...
-
-bool isDirectoryEmpty(const std::filesystem::path& dirPath) {
-    return std::filesystem::is_empty(dirPath);
+bool IsDirectoryEmpty(const std::string& dirPathStr) {
+    return std::filesystem::is_empty(dirPathStr);
 }
 
-bool doesFileExist(const std::filesystem::path& filePath) {
-    return std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath);
+bool DoesFileExist(const std::string& filePathStr) {
+    return std::filesystem::exists(filePathStr) && std::filesystem::is_regular_file(filePathStr);
 }
 
-std::string readFromFile(const std::filesystem::path& filePath) {
-    std::ifstream file(filePath);
+std::string ReadFromFile(const std::string& filePathStr) {
+    std::ifstream file(filePathStr);
     if (!file) {
-        throw std::runtime_error("Failed to open file for reading");
+        throw std::runtime_error("Failed to open file for reading: " + filePathStr);
     }
-    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    file.close();
-    return content;
+    return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 }
 
 } // namespace DirFunctions
