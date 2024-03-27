@@ -1,26 +1,53 @@
-#ifndef FILE_H
-#define FILE_H
-
+#include <iostream>
+#include <fstream>
+#include <filesystem>
 #include <string>
 #include <memory>
-#include <fstream>
-#include "concepts.h"
 
-class File {
+class FileReader {
 public:
-   explicit File(const std::string& filename);
-   virtual ~File();
-   bool isOpen() const;
-   bool open();
-   void close();
-   template <WritableType T>
-   bool write(const T& value);
-   template <ReadableType T>
-   bool read(T& value);
+    explicit FileReader(const std::string& filename);
+    virtual ~FileReader();
+
+    bool open();
+    bool close();
+    bool read(std::string& content);
+
 private:
-   std::string _filename;
-   std::unique_ptr<std::ofstream> _fileStream;
-   bool _isOpen;
+    std::string filename;
+    std::unique_ptr<std::ifstream> fileStream;
 };
 
-#endif
+class FileWriter {
+public:
+    explicit FileWriter(const std::string& filename);
+    virtual ~FileWriter();
+
+    bool open();
+    bool close();
+    bool write(const std::string& content);
+
+private:
+    std::string filename;
+    std::unique_ptr<std::ofstream> fileStream;
+};
+
+int main() {
+    std::string filename = "input.txt";
+
+    FileReader fileReader(filename);
+    if (fileReader.open()) {
+        std::string content;
+        fileReader.read(content);
+        std::cout << "Content: " << content << std::endl;
+        fileReader.close();
+    }
+
+    FileWriter fileWriter(filename);
+    if (fileWriter.open()) {
+        fileWriter.write("New content");
+        fileWriter.close();
+    }
+
+    return 0;
+}
