@@ -1,11 +1,13 @@
 #ifndef X86_H
 #define X86_H
 
-#include <stdint.h>
-#include <stdbool.h>
+#include <cstdint>
+#include <array>
 #include <unordered_map>
 
-typedef enum {
+namespace x86 {
+
+enum class InstructionSet : uint32_t {
     SSE = 1 << 0,
     SSE2 = 1 << 1,
     SSE3 = 1 << 2,
@@ -21,10 +23,10 @@ typedef enum {
     AVX512CD = 1 << 12,
     AVX512ER = 1 << 13,
     AVX512PF = 1 << 14,
-    AVX512EF = 1 << 15,
-} x86_instruction_set;
+    AVX512EF = 1 << 15
+};
 
-typedef enum {
+enum class Feature : uint32_t {
     FP = 1 << 0,
     ASM = 1 << 1,
     AVX = 1 << 2,
@@ -32,42 +34,49 @@ typedef enum {
     RDRND = 1 << 4,
     FMA = 1 << 5,
     CVT16 = 1 << 6,
-    MOVBE = 1 << 7,
-} x86_feature;
+    MOVBE = 1 << 7
+};
 
-struct x86_cpuid {
+struct CPUID {
     uint32_t vendor_id;
     uint32_t device_id;
     uint32_t revision;
     uint32_t features;
-    uint32_t instruction_sets[4];
+    std::array<uint32_t, 4> instruction_sets;
 };
 
-extern const struct x86_cpuid x86_cpuid;
+class CPUInfo {
+public:
+    CPUInfo(const CPUID& cpuid) : cpuid_(cpuid) {}
 
-static std::unordered_map<x86_feature, bool> feature_cache;
-static std::unordered_map<x86_instruction_set, bool> instruction_set_cache;
-
-static inline bool has_feature(x86_feature feature) {
-    auto it = feature_cache.find(feature);
-    if (it == feature_cache.end()) {
-        bool result = (x86_cpuid.features & feature) != 0;
-        feature_cache[feature] = result;
-        return result;
-    } else {
+    bool hasFeature(Feature feature) const {
+        auto it = feature_cache_.find(feature);
+        if (it == feature_cache_.end()) {
+            bool result = (cpuid_.features & static_cast<uint32_t>(feature)) != 0;
+            feature_cache_[feature] = result;
+            return result;
+        }
         return it->second;
     }
-}
 
-static inline bool has_instruction_set(x86_instruction_set set) {
-    auto it = instruction_set_cache.find(set);
-    if (it == instruction_set_cache.end()) {
-        bool result = (x86_cpuid.instruction_sets[set / 32] & (1U << (set % 32))) != 0;
-        instruction_set_cache[set] = result;
-        return result;
-    } else {
+    bool hasInstructionSet(InstructionSet set) const {
+        auto it = instruction_set_cache_.find(set);
+        if (it == instruction_set_cache_.end()) {
+            uint32_t index = static_cast<uint32_t>(set) / 32;
+            uint32_t bit = static_cast<uint32_t>(set) % 32;
+            bool result = (cpuid_.instruction_sets[index] & (1U << bit)) != 0;
+            instruction_set_cache_[set] = result;
+            return result;
+        }
         return it->second;
     }
-}
+
+private:
+    const CPUID& cpuid_;
+    mutable std::unordered_map<Feature, bool> feature_cache_;
+    mutable std::unordered_map<InstructionSet, bool> instruction_set_cache_;
+};
+
+} // namespace x86
 
 #endif /* X86_H */
