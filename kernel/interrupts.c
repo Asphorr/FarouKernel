@@ -1,16 +1,21 @@
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/mman.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/mman.h>
 #include <syslog.h>
 
 #define PAGE_SIZE 4096
 #define IDT_SIZE 256
 #define MAX_PROCESSORS 4
+
+#define INTERRUPT_TYPE_TIMER 0x20
+#define INTERRUPT_TYPE_KEYBOARD 0x21
+#define INTERRUPT_TYPE_DISK 0x22
+#define INTERRUPT_TYPE_NETWORK 0x23
 
 struct idt_entry {
     uint16_t offset_low;
@@ -25,14 +30,35 @@ struct idt_pointer {
     uintptr_t base;
 } __attribute__((packed));
 
+struct cpu_state {
+    uint32_t eax;
+    uint32_t ebx;
+    uint32_t ecx;
+    uint32_t edx;
+    uint32_t esi;
+    uint32_t edi;
+    uint32_t ebp;
+    uint32_t esp;
+    uint32_t eflags;
+};
+
+struct interrupt_frame {
+    uint32_t ip;
+    uint32_t cs;
+    uint32_t flags;
+    uint32_t sp;
+    uint32_t ss;
+};
+
 struct idt_entry idt[IDT_SIZE];
 struct idt_pointer idtp;
 
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 volatile bool keep_running = true;
 
-void load_idt(void *idt_ptr);
-void load_gdt(void *gdt_ptr);
+void load_idt(void *idt_ptr) {
+    __asm__("lidt [%0]" ::"r"(idt_ptr));
+}
 
 void set_idt_entry(int num, uintptr_t base, uint16_t sel, uint8_t flags) {
     idt[num].offset_low = base & 0xFFFF;
@@ -47,7 +73,6 @@ void setup_idt() {
     idtp.base = (uintptr_t)&idt;
 
     memset(&idt, 0, sizeof(struct idt_entry) * IDT_SIZE);
-    // Setup default handler for all vectors
     for (int i = 0; i < IDT_SIZE; i++) {
         set_idt_entry(i, (uintptr_t)default_interrupt_handler, 0x08, 0x8E);
     }
@@ -56,19 +81,36 @@ void setup_idt() {
 }
 
 void enable_interrupts() {
-    asm volatile("sti");
+    __asm__("sti");
 }
 
 void disable_interrupts() {
-    asm volatile("cli");
+    __asm__("cli");
 }
 
-void default_interrupt_handler(void) {
-    syslog(LOG_INFO, "Default interrupt handler called.");
-}
+void default_interrupt_handler(struct interrupt_frame* frame, struct cpu_state* cpu) {
+    int interrupt_number = frame->ip & 0xFF; // Simulated interrupt number extraction
+    syslog(LOG_INFO, "Interrupt 0x%X handled", interrupt_number);
+    syslog(LOG_INFO, "CPU State: EAX=0x%X, EBX=0x%X, ECX=0x%X, EDX=0x%X", cpu->eax, cpu->ebx, cpu->ecx, cpu->edx);
+    syslog(LOG_INFO, "Frame: IP=0x%X, CS=0x%X, FLAGS=0x%X, SP=0x%X, SS=0x%X", frame->ip, frame->cs, frame->flags, frame->sp, frame->ss);
 
-void custom_interrupt_handler(void) {
-    syslog(LOG_INFO, "Custom interrupt handler executed.");
+    switch (interrupt_number) {
+        case INTERRUPT_TYPE_TIMER:
+            syslog(LOG_INFO, "Timer interrupt occurred.");
+            break;
+        case INTERRUPT_TYPE_KEYBOARD:
+            syslog(LOG_INFO, "Keyboard interrupt occurred.");
+            break;
+        case INTERRUPT_TYPE_DISK:
+            syslog(LOG_INFO, "Disk interrupt occurred.");
+            break;
+        case INTERRUPT_TYPE_NETWORK:
+            syslog(LOG_INFO, "Network interrupt occurred.");
+            break;
+        default:
+            syslog(LOG_WARNING, "Unhandled interrupt 0x%X occurred.", interrupt_number);
+            break;
+    }
 }
 
 void signal_handler(int sig) {
@@ -79,9 +121,6 @@ void signal_handler(int sig) {
 }
 
 void* processor_main(void* arg) {
-    int processor_id = *(int*)arg;
-    free(arg);
-
     setup_idt();
     enable_interrupts();
 
@@ -90,41 +129,42 @@ void* processor_main(void* arg) {
     }
 
     disable_interrupts();
-    syslog(LOG_INFO, "Processor %d: Interrupts disabled, shutting down safely.", processor_id);
+    syslog(LOG_INFO, "Interrupts disabled, processor shutting down safely.");
     return NULL;
 }
 
 int main(int argc, char* argv[]) {
-    openlog("system_program", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL1);
+    openlog("system_interrupts", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL1);
 
     pthread_t threads[MAX_PROCESSORS];
-    int i;
+    signal(SIGINT, signal_handler);  // Set up signal handler for graceful shutdown
 
-    signal(SIGINT, signal_handler);
-
-    for (i = 0; i < MAX_PROCESSORS; i++) {
-        int* arg = malloc(sizeof(int));
+    // Create threads to simulate handling on different processors
+    for (int i = 0; i < MAX_PROCESSORS; i++) {
+        int *arg = malloc(sizeof(int));
+        if (!arg) {
+            syslog(LOG_ERR, "Failed to allocate memory for thread argument.");
+            continue;
+        }
         *arg = i;
         if (pthread_create(&threads[i], NULL, processor_main, arg) != 0) {
             syslog(LOG_ERR, "Failed to create thread for processor %d", i);
-            free(arg);
+            free(arg); // Cleanup if thread creation fails
         }
     }
 
-    for (i = 0; i < MAX_PROCESSORS; i++) {
+    // Wait for all threads to finish
+    for (int i = 0; i < MAX_PROCESSORS; i++) {
         pthread_join(threads[i], NULL);
     }
 
-    closelog();
+    closelog();  // Close the logging system
+
     return 0;
 }
 
 __asm__(
 "load_idt:\n"
-"   lidt [rdi]\n"
-"   ret\n"
-
-"load_gdt:\n"
-"   lgdt [rdi]\n"
+"   lidt [%0]\n"
 "   ret\n"
 );
