@@ -1,88 +1,82 @@
+#ifndef PGTABLE_H
+#define PGTABLE_H
+
+#include <stdint.h>
+#include <string.h>
 #include <asm/desc.h>
 
-#define GDT_ENTRIES 3
+#define GDT_ENTRIES 5
 #define IDT_ENTRIES 256
 
+/* GDT entry structure */
 struct gdt_entry {
-    unsigned short limit_low;
-    unsigned short base_low;
-    unsigned char base_middle;
-    unsigned char access;
-    unsigned char granularity;
-    unsigned char base_high;
+    uint16_t limit_low;
+    uint16_t base_low;
+    uint8_t base_middle;
+    uint8_t access;
+    uint8_t granularity;
+    uint8_t base_high;
 } __attribute__((packed));
 
+/* TSS (Task State Segment) structure for task switching */
+struct tss_entry {
+    uint32_t prev_tss;
+    uint32_t esp0;
+    uint32_t ss0;
+    uint32_t esp1;
+    uint32_t ss1;
+    uint32_t esp2;
+    uint32_t ss2;
+    uint32_t cr3;
+    uint32_t eip;
+    uint32_t eflags;
+    uint32_t eax, ecx, edx, ebx;
+    uint32_t esp, ebp, esi, edi;
+    uint32_t es, cs, ss, ds, fs, gs;
+    uint32_t ldt;
+    uint16_t trap;
+    uint16_t iomap_base;
+} __attribute__((packed));
+
+/* IDT entry structure */
 struct idt_entry {
-    unsigned short base_low;
-    unsigned short selector;
-    unsigned char always0;
-    unsigned char flags;
-    unsigned short base_high;
+    uint16_t base_low;
+    uint16_t selector;
+    uint8_t always0;
+    uint8_t flags;
+    uint16_t base_high;
 } __attribute__((packed));
 
+/* GDT pointer structure */
 struct gdt_ptr {
-    unsigned short limit;
-    unsigned int base;
+    uint16_t limit;
+    uint64_t base;
 } __attribute__((packed));
 
+/* IDT pointer structure */
 struct idt_ptr {
-    unsigned short limit;
-    unsigned int base;
+    uint16_t limit;
+    uint64_t base;
 } __attribute__((packed));
 
-struct gdt_entry gdt[GDT_ENTRIES];
-struct gdt_ptr gp;
+/* Global instance declarations */
+extern struct gdt_entry gdt[GDT_ENTRIES];
+extern struct gdt_ptr gp;
+extern struct tss_entry tss;
+extern struct idt_entry idt[IDT_ENTRIES];
+extern struct idt_ptr idtp;
 
-struct idt_entry idt[IDT_ENTRIES];
-struct idt_ptr idtp;
+/* Assembly functions */
+extern void gdt_flush(uint64_t);
+extern void idt_flush(uint64_t);
+extern void tss_flush();
 
-extern void gdt_flush();
-extern void idt_flush();
+/* Function declarations */
+void gdt_set_gate(int num, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran);
+void tss_set_gate(int num, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran);
+void idt_set_gate(uint8_t num, uint64_t base, uint16_t sel, uint8_t flags);
+void setup_gdt();
+void setup_idt();
+void setup_tss(uint32_t kernel_stack);
 
-void gdt_set_gate(int num, unsigned long base, unsigned long limit, unsigned char access, unsigned char gran)
-{
-    gdt[num].base_low = (base & 0xFFFF);
-    gdt[num].base_middle = (base >> 16) & 0xFF;
-    gdt[num].base_high = (base >> 24) & 0xFF;
-
-    gdt[num].limit_low = (limit & 0xFFFF);
-    gdt[num].granularity = ((limit >> 16) & 0x0F);
-
-    gdt[num].granularity |= (gran & 0xF0);
-    gdt[num].access = access;
-}
-
-void idt_set_gate(unsigned char num, unsigned long base, unsigned short sel, unsigned char flags)
-{
-    idt[num].base_low = base & 0xFFFF;
-    idt[num].base_high = (base >> 16) & 0xFFFF;
-
-    idt[num].selector = sel;
-    idt[num].always0 = 0;
-    idt[num].flags = flags;
-}
-
-void setup_gdt()
-{
-    gp.limit = (sizeof(struct gdt_entry) * GDT_ENTRIES) - 1;
-    gp.base = (unsigned int)&gdt;
-
-    gdt_set_gate(0, 0, 0, 0, 0);                    /* Null segment */
-    gdt_set_gate(1, 0, 0xFFFFFFFF, 0x9A, 0xCF);    /* Code segment */
-    gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0xCF);    /* Data segment */
-
-    gdt_flush();
-}
-
-void setup_idt()
-{
-    idtp.limit = IDT_ENTRIES * sizeof(struct idt_entry) - 1;
-    idtp.base = (unsigned int)&idt;
-
-    /* Clear out the entire IDT, initializing it to zeros */
-    memset(&idt, 0, sizeof(struct idt_entry) * IDT_ENTRIES);
-
-    /* Add any new ISRs to the IDT here using idt_set_gate */
-
-    idt_flush();
-}
+#endif /* PGTABLE_H */
