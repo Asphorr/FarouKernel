@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <asm/desc.h>
 
 #define GDT_ENTRIES 5
 #define IDT_ENTRIES 256
@@ -59,7 +58,7 @@ struct idt_ptr {
     uint64_t base;
 } __attribute__((packed));
 
-/* Global instance declarations */
+/* Global variable declarations */
 extern struct gdt_entry gdt[GDT_ENTRIES];
 extern struct gdt_ptr gp;
 extern struct tss_entry tss;
