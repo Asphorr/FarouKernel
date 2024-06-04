@@ -6,8 +6,11 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
+#include <vector>
+#include <concepts>
 
-// Define a concept for the kernel class
+// Kernel Concept for Kernel Class
 template <typename T>
 concept KernelConcept = requires(T k) {
     { k.getName() } -> std::convertible_to<std::string_view>;
@@ -24,10 +27,9 @@ concept KernelConcept = requires(T k) {
     { k.start() } -> std::same_as<void>;
 };
 
-// Implement the kernel class
-class Kernel final : public KernelConcept<Kernel> {
+// Kernel Class Implementation
+class Kernel final {
 public:
-    // Constructor
     Kernel(std::string name, int major, int minor, std::string releaseDate, std::string buildTime,
            std::string author, std::string copyright, std::string license, std::string description)
         : m_name(std::move(name)), m_major(major), m_minor(minor), m_releaseDate(std::move(releaseDate)),
@@ -50,7 +52,7 @@ public:
     // Request stop
     void requestStop() noexcept {
         m_running.store(false, std::memory_order_release);
-        m_cv.notify_one();
+        m_cv.notify_all();
     }
 
     // Wait for stop
@@ -66,11 +68,53 @@ public:
         }
 
         m_running.store(true, std::memory_order_release);
+        m_thread = std::thread(&Kernel::run, this);
+    }
 
-        // Add code to start the kernel here
+    // Join the kernel thread
+    void join() {
+        if (m_thread.joinable()) {
+            m_thread.join();
+        }
+    }
+
+    // Add a task to the kernel's task queue
+    void addTask(std::function<void()> task) {
+        std::lock_guard<std::mutex> lock(m_taskMutex);
+        m_tasks.push_back(std::move(task));
+        m_taskCv.notify_one();
     }
 
 private:
+    void run() {
+        while (m_running.load(std::memory_order_acquire)) {
+            std::function<void()> task;
+            {
+                std::unique_lock<std::mutex> lock(m_taskMutex);
+                m_taskCv.wait(lock, [this] { return !m_tasks.empty() || !m_running.load(std::memory_order_acquire); });
+                if (!m_running.load(std::memory_order_acquire) && m_tasks.empty()) {
+                    break;
+                }
+                task = std::move(m_tasks.front());
+                m_tasks.erase(m_tasks.begin());
+            }
+
+            try {
+                if (task) {
+                    task();
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Error executing task: " << e.what() << '\n';
+            } catch (...) {
+                std::cerr << "Unknown error occurred while executing task\n";
+            }
+        }
+
+        // Notify all threads waiting for the kernel to stop
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_cv.notify_all();
+    }
+
     std::string m_name;
     int m_major;
     int m_minor;
@@ -81,6 +125,45 @@ private:
     std::string m_license;
     std::string m_description;
     std::atomic<bool> m_running{false};
+    std::thread m_thread;
     std::mutex m_mutex;
     std::condition_variable m_cv;
+
+    std::mutex m_taskMutex;
+    std::condition_variable m_taskCv;
+    std::vector<std::function<void()>> m_tasks;
 };
+
+// Ensure Kernel conforms to KernelConcept
+static_assert(KernelConcept<Kernel>, "Kernel does not conform to KernelConcept");
+
+// Example usage of the kernel class
+int main() {
+    try {
+        Kernel kernel(
+            "MyKernel", 1, 0, "2024-06-01", "14:00:00", "Jane Doe",
+            "© 2024 Jane Doe", "MIT License", "A simple multitasking kernel");
+
+        // Start the kernel
+        kernel.start();
+
+        // Add some tasks
+        kernel.addTask([] { std::cout << "Task 1 executed\n"; });
+        kernel.addTask([] { std::cout << "Task 2 executed\n"; });
+        kernel.addTask([] { std::cout << "Task 3 executed\n"; });
+
+        // Request stop after a delay
+        std::thread stopThread([&kernel] {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            kernel.requestStop();
+        });
+
+        // Wait for the kernel to finish
+        kernel.join();
+        stopThread.join();
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << '\n';
+    }
+
+    return 0;
+}
