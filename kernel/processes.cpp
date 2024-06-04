@@ -10,7 +10,9 @@
 #include <unistd.h>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 
+// Process Information Structure
 struct ProcessInfo {
     pid_t pid;
     int priority;
@@ -18,117 +20,165 @@ struct ProcessInfo {
     bool isThread;
 };
 
-std::vector<ProcessInfo> processInfos;
-std::mutex processMutex;  // Mutex to protect access to processInfos
-
-// Utility function to handle errors in syscalls
-void handle_syscall_error(const char* message) {
-    perror(message);
-    throw std::runtime_error(message);
-}
-
-// Create a process to execute the given function
-pid_t create_process(std::function<void()> func, int priority) {
-    pid_t pid = fork();
-
-    if (pid == -1) {
-        handle_syscall_error("Failed to create process");
-    } else if (pid == 0) {
-        // Child process
-        func();
-        exit(EXIT_SUCCESS);
+// Process Manager Class
+class ProcessManager {
+public:
+    // Singleton pattern for global access
+    static ProcessManager& instance() {
+        static ProcessManager instance;
+        return instance;
     }
 
-    // Parent process: add process info to the list
-    std::lock_guard<std::mutex> lock(processMutex);
-    processInfos.push_back({pid, priority, std::thread(), false});
-    return pid;
-}
+    // Add a new process
+    pid_t addProcess(std::function<void()> func, int priority = 0) {
+        pid_t pid = fork();
+        if (pid == -1) {
+            handleSyscallError("Failed to create process");
+        } else if (pid == 0) {
+            // Child process
+            func();
+            exit(EXIT_SUCCESS);
+        }
 
-// Wait for the specified process to finish
-int wait_for_process(pid_t pid) {
-    int status;
-    if (waitpid(pid, &status, 0) == -1) {
-        handle_syscall_error("Failed to wait for process");
+        // Parent process: add process info to the list
+        std::lock_guard<std::mutex> lock(m_processMutex);
+        m_processInfos.push_back({pid, priority, std::thread(), false});
+        return pid;
     }
-    return status;
-}
 
-// Add a process to the list to be waited for later
-void add_process(std::function<void()> func, int priority) {
-    create_process(func, priority);
-}
+    // Add a new multithreaded process
+    void addThreadProcess(std::function<void()> func, int priority = 0) {
+        std::lock_guard<std::mutex> lock(m_processMutex);
+        std::thread t(func);
+        m_processInfos.push_back({0, priority, std::move(t), true});
+    }
 
-// Wait for all processes and threads in the list to finish
-void wait_all_processes() {
-    std::lock_guard<std::mutex> lock(processMutex);
-    for (auto& process : processInfos) {
-        if (!process.isThread) {
-            wait_for_process(process.pid);
-        } else if (process.workerThread.joinable()) {
-            process.workerThread.join();
+    // Wait for all processes and threads to finish
+    void waitForAll() {
+        std::unique_lock<std::mutex> lock(m_processMutex);
+        m_cv.wait(lock, [this] { return m_processInfos.empty(); });
+    }
+
+    // Terminate all processes
+    void terminateAll() {
+        std::lock_guard<std::mutex> lock(m_processMutex);
+        for (auto& process : m_processInfos) {
+            if (!process.isThread) {
+                terminateProcess(process.pid);
+            } else if (process.workerThread.joinable()) {
+                process.workerThread.join();
+            }
+        }
+        m_processInfos.clear();
+    }
+
+    // Set signal handler
+    void setSignalHandler(int signal, void (*handler)(int)) {
+        struct sigaction sa;
+        sa.sa_handler = handler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+        if (sigaction(signal, &sa, nullptr) == -1) {
+            handleSyscallError("Failed to set signal handler");
         }
     }
-    processInfos.clear();
-}
 
-// Check the status of a process without blocking
-int check_process_status(pid_t pid) {
-    int status;
-    if (waitpid(pid, &status, WNOHANG) == -1) {
-        handle_syscall_error("Failed to check process status");
+    // Create a process group
+    void createProcessGroup(pid_t pid) {
+        if (setpgid(pid, pid) == -1) {
+            handleSyscallError("Failed to create process group");
+        }
     }
-    return status;
-}
 
-// Terminate a process by sending SIGTERM
-void terminate_process(pid_t pid) {
-    if (kill(pid, SIGTERM) == -1) {
-        handle_syscall_error("Failed to terminate process");
+    // Join an existing process group
+    void joinProcessGroup(pid_t pid) {
+        if (setpgid(getpid(), pid) == -1) {
+            handleSyscallError("Failed to join process group");
+        }
     }
-}
 
-// Function to set up signal handling
-void set_signal_handler(int signal, void (*handler)(int)) {
-    struct sigaction sa;
-    sa.sa_handler = handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    if (sigaction(signal, &sa, nullptr) == -1) {
-        handle_syscall_error("Failed to set signal handler");
+private:
+    // Constructor
+    ProcessManager() = default;
+
+    // Destructor
+    ~ProcessManager() {
+        terminateAll();
     }
-}
 
-// Create a new process group
-void create_process_group(pid_t pid) {
-    if (setpgid(pid, pid) == -1) {
-        handle_syscall_error("Failed to create process group");
+    // Disable copy/move constructors and assignment
+    ProcessManager(const ProcessManager&) = delete;
+    ProcessManager& operator=(const ProcessManager&) = delete;
+    ProcessManager(ProcessManager&&) = delete;
+    ProcessManager& operator=(ProcessManager&&) = delete;
+
+    // Utility function to handle errors in syscalls
+    void handleSyscallError(const char* message) {
+        perror(message);
+        throw std::runtime_error(message);
     }
-}
 
-// Join an existing process group
-void join_process_group(pid_t pid) {
-    if (setpgid(getpid(), pid) == -1) {
-        handle_syscall_error("Failed to join process group");
+    // Terminate a process by sending SIGTERM
+    void terminateProcess(pid_t pid) {
+        if (kill(pid, SIGTERM) == -1) {
+            handleSyscallError("Failed to terminate process");
+        }
     }
-}
 
-// Function to handle multithreading
-void add_process_mt(std::function<void()> func, int priority) {
-    std::lock_guard<std::mutex> lock(processMutex);
-    std::thread t(func);
-    processInfos.push_back({0, priority, std::move(t), true});
-}
+    // Wait for a specific process to finish
+    int waitForProcess(pid_t pid) {
+        int status;
+        if (waitpid(pid, &status, 0) == -1) {
+            handleSyscallError("Failed to wait for process");
+        }
+        return status;
+    }
 
-int main() {
+    // Check the status of a process without blocking
+    int checkProcessStatus(pid_t pid) {
+        int status;
+        if (waitpid(pid, &status, WNOHANG) == -1) {
+            handleSyscallError("Failed to check process status");
+        }
+        return status;
+    }
+
+    std::vector<ProcessInfo> m_processInfos;
+    std::mutex m_processMutex;
+    std::condition_variable m_cv;
+};
+
+// Example usage of ProcessManager
+int main()
+{
     try {
-        add_process([]() {
-            std::cout << "Process running\n";
-            sleep(2);  // Simulate work
-        }, 1);
+        // Example process creation
+        ProcessManager& pm = ProcessManager::instance();
 
-        wait_all_processes();
-        std::cout << "All processes completed\n";
+        // Add a process
+        pm.addProcess([] {
+            std::cout << "Process 1 running\n";
+            sleep(2); // Simulate work
+            std::cout << "Process 1 finished\n";
+        });
+
+        // Add another process with priority
+        pm.addProcess([] {
+            std::cout << "Process 2 running\n";
+            sleep(3); // Simulate work
+            std::cout << "Process 2 finished\n";
+        });
+
+        // Add a multithreaded process
+        pm.addThreadProcess([] {
+            std::cout << "Thread Process running\n";
+            std::this_thread::sleep_for(std::chrono::seconds(1)); // Simulate work
+            std::cout << "Thread Process finished\n";
+        });
+
+        // Wait for all processes and threads to finish
+        pm.waitForAll();
+        std::cout << "All processes and threads completed\n";
     } catch (const std::exception& e) {
         std::cerr << "Exception: " << e.what() << '\n';
         return EXIT_FAILURE;
