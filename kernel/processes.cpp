@@ -31,6 +31,7 @@ public:
 
     // Add a new process
     pid_t addProcess(std::function<void()> func, int priority = 0) {
+        std::lock_guard<std::mutex> lock(m_processMutex);  // Lock the mutex before forking
         pid_t pid = fork();
         if (pid == -1) {
             handleSyscallError("Failed to create process");
@@ -41,22 +42,33 @@ public:
         }
 
         // Parent process: add process info to the list
-        std::lock_guard<std::mutex> lock(m_processMutex);
         m_processInfos.push_back({pid, priority, std::thread(), false});
         return pid;
     }
 
     // Add a new multithreaded process
     void addThreadProcess(std::function<void()> func, int priority = 0) {
+        std::thread t([this, func, priority] {
+            func();
+            onThreadFinish();  // Notify when the thread finishes
+        });
         std::lock_guard<std::mutex> lock(m_processMutex);
-        std::thread t(func);
         m_processInfos.push_back({0, priority, std::move(t), true});
     }
 
     // Wait for all processes and threads to finish
     void waitForAll() {
         std::unique_lock<std::mutex> lock(m_processMutex);
-        m_cv.wait(lock, [this] { return m_processInfos.empty(); });
+        m_cv.wait(lock, [this] { return std::all_of(m_processInfos.begin(), m_processInfos.end(), [this](const ProcessInfo& p) {
+            if (p.isThread) {
+                if (p.workerThread.joinable()) {
+                    p.workerThread.join();
+                }
+                return true;
+            } else {
+                return checkProcessStatus(p.pid) != -1;
+            }
+        }); });
     }
 
     // Terminate all processes
@@ -143,14 +155,22 @@ private:
         return status;
     }
 
+    // Notify when a thread finishes
+    void onThreadFinish() {
+        std::lock_guard<std::mutex> lock(m_processMutex);
+        m_processInfos.erase(std::remove_if(m_processInfos.begin(), m_processInfos.end(),
+                                             [](const ProcessInfo& p) { return p.isThread && !p.workerThread.joinable(); }),
+                             m_processInfos.end());
+        m_cv.notify_all();
+    }
+
     std::vector<ProcessInfo> m_processInfos;
     std::mutex m_processMutex;
     std::condition_variable m_cv;
 };
 
 // Example usage of ProcessManager
-int main()
-{
+int main() {
     try {
         // Example process creation
         ProcessManager& pm = ProcessManager::instance();
