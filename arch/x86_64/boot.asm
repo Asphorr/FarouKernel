@@ -123,9 +123,11 @@ gdt64:
     dq 0x0000000000000000        ; Null descriptor
     dq 0x00A09A000000FFFF        ; Code 64-bit
     dq 0x00A092000000FFFF        ; Data 64-bit
-gdt64_descriptor:
-    dw gdt64 - gdt64 - 1
-    dd gdt64
 
-times 510 - ($ - $$) db 0
-dw 0xAA55
+gdt64_descriptor:
+       dw gdt64 - gdt64 - 1
+       dd gdt64
+
+   ; Boot signature
+   times 510 - ($ - $$) db 0
+   dw 0xAA55
