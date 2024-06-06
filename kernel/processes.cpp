@@ -20,7 +20,7 @@ struct ProcessInfo {
     int priority;
     std::thread workerThread;
     bool isThread;
-    bool isPaused;
+    bool isPaused;  // New field to track if the process is paused
 };
 
 // Process Manager Class
@@ -34,7 +34,7 @@ public:
 
     // Add a new process
     pid_t addProcess(std::function<void()> func, int priority = 0) {
-        std::lock_guard<std::mutex> lock(m_processMutex);  // Lock the mutex before forking
+        std::lock_guard<std::mutex> lock(m_processMutex);  // Lock before forking
         pid_t pid = fork();
         if (pid == -1) {
             handleSyscallError("Failed to create process");
@@ -43,10 +43,9 @@ public:
             func();
             exit(EXIT_SUCCESS);
         }
-
         // Parent process: add process info to the list
         m_processInfos.push_back({pid, priority, std::thread(), false, false});
-        setPriority(pid, priority);  // Set the process priority
+        setPriority(pid, priority);  // Set priority
         return pid;
     }
 
@@ -54,7 +53,7 @@ public:
     void addThreadProcess(std::function<void()> func, int priority = 0) {
         std::thread t([this, func, priority] {
             func();
-            onThreadFinish();  // Notify when the thread finishes
+            onThreadFinish();  // Notify on completion
         });
         std::lock_guard<std::mutex> lock(m_processMutex);
         m_processInfos.push_back({0, priority, std::move(t), true, false});
@@ -63,16 +62,18 @@ public:
     // Wait for all processes and threads to finish
     void waitForAll() {
         std::unique_lock<std::mutex> lock(m_processMutex);
-        m_cv.wait(lock, [this] { return std::all_of(m_processInfos.begin(), m_processInfos.end(), [this](const ProcessInfo& p) {
-            if (p.isThread) {
-                if (p.workerThread.joinable()) {
-                    p.workerThread.join();
+        m_cv.wait(lock, [this] {
+            return std::all_of(m_processInfos.begin(), m_processInfos.end(), [this](const ProcessInfo& p) {
+                if (p.isThread) {
+                    if (p.workerThread.joinable()) {
+                        p.workerThread.join();
+                    }
+                    return true;
+                } else {
+                    return checkProcessStatus(p.pid) != -1;
                 }
-                return true;
-            } else {
-                return checkProcessStatus(p.pid) != -1;
-            }
-        }); });
+            });
+        });
     }
 
     // Terminate all processes
@@ -96,6 +97,17 @@ public:
         sa.sa_flags = 0;
         if (sigaction(signal, &sa, nullptr) == -1) {
             handleSyscallError("Failed to set signal handler");
+        }
+    }
+
+    // Handle signal with additional flags for flexibility
+    void handleSignal(int signal, void (*handler)(int), int flags = 0) {
+        struct sigaction sa;
+        sa.sa_handler = handler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = flags;
+        if (sigaction(signal, &sa, nullptr) == -1) {
+            handleSyscallError("Failed to handle signal");
         }
     }
 
@@ -158,17 +170,6 @@ public:
         return m_processInfos;
     }
 
-    // Enhanced signal handling
-    void handleSignal(int signal, void (*handler)(int), int flags = 0) {
-        struct sigaction sa;
-        sa.sa_handler = handler;
-        sigemptyset(&sa.sa_mask);
-        sa.sa_flags = flags;
-        if (sigaction(signal, &sa, nullptr) == -1) {
-            handleSyscallError("Failed to handle signal");
-        }
-    }
-
 private:
     // Constructor
     ProcessManager() = default;
@@ -215,7 +216,7 @@ private:
         return status;
     }
 
-    // Notify when a thread finishes
+    // Notify when a thread finishes execution
     void onThreadFinish() {
         std::lock_guard<std::mutex> lock(m_processMutex);
         m_processInfos.erase(std::remove_if(m_processInfos.begin(), m_processInfos.end(),
@@ -224,7 +225,7 @@ private:
         m_cv.notify_all();
     }
 
-    // Update process paused status
+    // Update the status of a process (paused or not)
     void updateProcessStatus(pid_t pid, bool isPaused) {
         for (auto& process : m_processInfos) {
             if (process.pid == pid) {
@@ -240,40 +241,33 @@ private:
 };
 
 // Example usage of ProcessManager
-int main() {
+int main()
+{
     try {
-        // Example process creation
         ProcessManager& pm = ProcessManager::instance();
 
         // Add a process
         pm.addProcess([] {
             std::cout << "Process 1 running\n";
-            sleep(2); // Simulate work
+            sleep(2);
             std::cout << "Process 1 finished\n";
         });
 
         // Add another process with priority
         pm.addProcess([] {
             std::cout << "Process 2 running\n";
-            sleep(3); // Simulate work
+            sleep(3);
             std::cout << "Process 2 finished\n";
         });
 
         // Add a multithreaded process
         pm.addThreadProcess([] {
             std::cout << "Thread Process running\n";
-            std::this_thread::sleep_for(std::chrono::seconds(1)); // Simulate work
+            std::this_thread::sleep_for(std::chrono::seconds(1));
             std::cout << "Thread Process finished\n";
         });
 
-        // Set custom signal handler for SIGINT
-        pm.setSignalHandler(SIGINT, [](int signal) {
-            std::cout << "Received SIGINT, terminating all processes.\n";
-            ProcessManager::instance().terminateAll();
-            exit(EXIT_SUCCESS);
-        });
-
-        // Pause a process (example)
+        // Pause and resume a process
         auto pids = pm.getProcessInfo();
         if (!pids.empty()) {
             pm.pauseProcess(pids[0].pid);
