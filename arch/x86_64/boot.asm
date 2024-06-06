@@ -12,11 +12,11 @@ start:
     mov ss, ax
     mov sp, 0x7C00
 
-    ; Print a message
+    ; Enhanced informational message
     mov si, hello
     call print_string
 
-    ; Load the kernel into memory (0x100000)
+    ; Load kernel dynamically
     mov ax, 0x1000
     mov es, ax
     mov di, 0x0000
@@ -106,7 +106,7 @@ print_string:
     popa
     ret
 
-hello db "Loading Kernel", 0
+hello db "Loading Kernel...", 0
 
 ; GDT definitions
 align 8
