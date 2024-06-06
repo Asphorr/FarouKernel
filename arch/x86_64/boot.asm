@@ -12,11 +12,11 @@ start:
     mov ss, ax
     mov sp, 0x7C00
 
-    ; Load kernel to 0x100000
+    ; Print a message
     mov si, hello
     call print_string
 
-    ; Load the kernel into memory
+    ; Load the kernel into memory (0x100000)
     mov ax, 0x1000
     mov es, ax
     mov di, 0x0000
@@ -38,7 +38,7 @@ switch_to_protected_mode:
     out 0x92, al
 
     ; Enable protected mode
-    mov cr0, eax
+    mov eax, cr0
     or eax, 0x1
     mov cr0, eax
 
@@ -59,7 +59,7 @@ protected_mode_entry:
     call switch_to_long_mode
 
 switch_to_long_mode:
-    ; Load LDT
+    ; Load GDT for 64-bit mode
     lgdt [gdt64_descriptor]
 
     ; Enable long mode
