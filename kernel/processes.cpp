@@ -11,6 +11,8 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
+#include <map>
 
 // Process Information Structure
 struct ProcessInfo {
@@ -18,6 +20,7 @@ struct ProcessInfo {
     int priority;
     std::thread workerThread;
     bool isThread;
+    bool isPaused;
 };
 
 // Process Manager Class
@@ -42,7 +45,8 @@ public:
         }
 
         // Parent process: add process info to the list
-        m_processInfos.push_back({pid, priority, std::thread(), false});
+        m_processInfos.push_back({pid, priority, std::thread(), false, false});
+        setPriority(pid, priority);  // Set the process priority
         return pid;
     }
 
@@ -53,7 +57,7 @@ public:
             onThreadFinish();  // Notify when the thread finishes
         });
         std::lock_guard<std::mutex> lock(m_processMutex);
-        m_processInfos.push_back({0, priority, std::move(t), true});
+        m_processInfos.push_back({0, priority, std::move(t), true, false});
     }
 
     // Wait for all processes and threads to finish
@@ -106,6 +110,62 @@ public:
     void joinProcessGroup(pid_t pid) {
         if (setpgid(getpid(), pid) == -1) {
             handleSyscallError("Failed to join process group");
+        }
+    }
+
+    // Pause a process
+    void pauseProcess(pid_t pid) {
+        std::lock_guard<std::mutex> lock(m_processMutex);
+        if (kill(pid, SIGSTOP) == -1) {
+            handleSyscallError("Failed to pause process");
+        } else {
+            updateProcessStatus(pid, true);
+        }
+    }
+
+    // Resume a paused process
+    void resumeProcess(pid_t pid) {
+        std::lock_guard<std::mutex> lock(m_processMutex);
+        if (kill(pid, SIGCONT) == -1) {
+            handleSyscallError("Failed to resume process");
+        } else {
+            updateProcessStatus(pid, false);
+        }
+    }
+
+    // Reap zombie processes
+    void reapZombies() {
+        std::lock_guard<std::mutex> lock(m_processMutex);
+        for (auto it = m_processInfos.begin(); it != m_processInfos.end();) {
+            if (!it->isThread && checkProcessStatus(it->pid) == -1) {
+                it = m_processInfos.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // Set process priority
+    void setPriority(pid_t pid, int priority) {
+        if (setpriority(PRIO_PROCESS, pid, priority) == -1) {
+            handleSyscallError("Failed to set process priority");
+        }
+    }
+
+    // Get process information
+    std::vector<ProcessInfo> getProcessInfo() {
+        std::lock_guard<std::mutex> lock(m_processMutex);
+        return m_processInfos;
+    }
+
+    // Enhanced signal handling
+    void handleSignal(int signal, void (*handler)(int), int flags = 0) {
+        struct sigaction sa;
+        sa.sa_handler = handler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = flags;
+        if (sigaction(signal, &sa, nullptr) == -1) {
+            handleSyscallError("Failed to handle signal");
         }
     }
 
@@ -164,6 +224,16 @@ private:
         m_cv.notify_all();
     }
 
+    // Update process paused status
+    void updateProcessStatus(pid_t pid, bool isPaused) {
+        for (auto& process : m_processInfos) {
+            if (process.pid == pid) {
+                process.isPaused = isPaused;
+                break;
+            }
+        }
+    }
+
     std::vector<ProcessInfo> m_processInfos;
     std::mutex m_processMutex;
     std::condition_variable m_cv;
@@ -195,6 +265,21 @@ int main() {
             std::this_thread::sleep_for(std::chrono::seconds(1)); // Simulate work
             std::cout << "Thread Process finished\n";
         });
+
+        // Set custom signal handler for SIGINT
+        pm.setSignalHandler(SIGINT, [](int signal) {
+            std::cout << "Received SIGINT, terminating all processes.\n";
+            ProcessManager::instance().terminateAll();
+            exit(EXIT_SUCCESS);
+        });
+
+        // Pause a process (example)
+        auto pids = pm.getProcessInfo();
+        if (!pids.empty()) {
+            pm.pauseProcess(pids[0].pid);
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            pm.resumeProcess(pids[0].pid);
+        }
 
         // Wait for all processes and threads to finish
         pm.waitForAll();
