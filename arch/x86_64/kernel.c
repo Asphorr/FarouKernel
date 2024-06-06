@@ -152,9 +152,126 @@ int sys_close(int fd) {
            sys_close(fd);
        }
 
+       #include <stdint.h>
+
+#define PAGE_PRESENT  0x1
+#define PAGE_RW       0x2
+#define PAGE_USER     0x4
+
+/* Page Directory Entry (PDE) and Page Table Entry (PTE) structures */
+typedef struct {
+    uint32_t entries[1024];
+} page_table_t;
+
+typedef struct {
+    uint32_t entries[1024];
+} page_directory_t;
+
+/* Kernel Page Directory */
+page_directory_t kernel_page_directory __attribute__((aligned(4096)));
+page_table_t kernel_page_table __attribute__((aligned(4096)));
+
+/* Initialize Paging */
+void init_paging() {
+    /* Initialize Page Table */
+    for (int i = 0; i < 1024; i++) {
+        kernel_page_table.entries[i] = (i * 0x1000) | PAGE_PRESENT | PAGE_RW;
+    }
+
+    /* Initialize Page Directory */
+    kernel_page_directory.entries[0] = ((uint32_t)&kernel_page_table) | PAGE_PRESENT | PAGE_RW;
+    for (int i = 1; i < 1024; i++) {
+        kernel_page_directory.entries[i] = 0;
+    }
+
+    /* Load Page Directory */
+    asm volatile("mov %0, %%cr3":: "r"(&kernel_page_directory));
+
+    /* Enable Paging */
+    uint32_t cr0;
+    asm volatile("mov %%cr0, %0": "=r"(cr0));
+    cr0 |= 0x80000000;
+    asm volatile("mov %0, %%cr0":: "r"(cr0));
+}
+
+void kernel_main() {
+    init_paging();
+    /* Further kernel initialization */
+}
+       #include <stdint.h>
+
+#define HEAP_START 0x100000
+#define HEAP_SIZE  0x100000
+
+typedef struct free_block {
+    size_t size;
+    struct free_block *next;
+} free_block_t;
+
+static free_block_t *free_list = (free_block_t *)HEAP_START;
+
+void init_heap() {
+    free_list->size = HEAP_SIZE - sizeof(free_block_t);
+    free_list->next = NULL;
+}
+
+void *kmalloc(size_t size) {
+    free_block_t *current = free_list;
+    free_block_t *previous = NULL;
+
+    /* Align to 8 bytes */
+    size = (size + 7) & ~7;
+
+    while (current != NULL) {
+        if (current->size >= size) {
+            if (current->size > size + sizeof(free_block_t)) {
+                /* Split the block */
+                free_block_t *new_block = (free_block_t *)((uintptr_t)current + sizeof(free_block_t) + size);
+                new_block->size = current->size - size - sizeof(free_block_t);
+                new_block->next = current->next;
+                current->size = size;
+                current->next = new_block;
+            }
+
+            if (previous != NULL) {
+                previous->next = current->next;
+            } else {
+                free_list = current->next;
+            }
+
+            return (void *)((uintptr_t)current + sizeof(free_block_t));
+        }
+
+        previous = current;
+        current = current->next;
+    }
+
+    return NULL; /* Out of memory */
+}
+
+void kfree(void *ptr) {
+    free_block_t *block = (free_block_t *)((uintptr_t)ptr - sizeof(free_block_t));
+    block->next = free_list;
+    free_list = block;
+}
+
+void kernel_main() {
+    init_paging();
+    init_heap();
+
+    /* Test heap allocation */
+    char *ptr1 = (char *)kmalloc(100);
+    char *ptr2 = (char *)kmalloc(200);
+    kfree(ptr1);
+    kfree(ptr2);
+    /* Further kernel initialization */
+}
+       
        /* Test sys_exit */
        printf("Exiting with code 0\n");
        sys_exit(0);
+
+       
 
        return 0; /* This will not be reached due to sys_exit */
    }
