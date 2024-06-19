@@ -1,11 +1,12 @@
-#include <cstdio>
-#include <functional>
-#include <memory>
-#include <optional>
-#include <stdexcept>
-#include <string>
-#include <utility>
+#include <iostream>
 #include <variant>
+#include <string>
+#include <stdexcept>
+#include <memory>
+#include <cstdio>
+#include <cstdlib>
+#include <unistd.h>
+#include <fcntl.h>
 
 using namespace std::literals;
 
@@ -27,9 +28,11 @@ class Read : public SystemCall {
 public:
     void Execute() override {
         char buffer[4096];
-        size_t bytes_read = read(STDIN_FILENO, buffer, sizeof(buffer));
-        printf("%zu bytes read:\n", bytes_read);
-        fflush(stdout);
+        ssize_t bytes_read = read(STDIN_FILENO, buffer, sizeof(buffer));
+        if (bytes_read == -1) {
+            throw std::runtime_error("Read failed");
+        }
+        std::cout << bytes_read << " bytes read:\n";
     }
 };
 
@@ -38,8 +41,10 @@ public:
     void Execute() override {
         char buffer[4096];
         ssize_t bytes_written = write(STDOUT_FILENO, buffer, sizeof(buffer));
-        printf("%zd bytes written.\n", bytes_written);
-        fflush(stdout);
+        if (bytes_written == -1) {
+            throw std::runtime_error("Write failed");
+        }
+        std::cout << bytes_written << " bytes written.\n";
     }
 };
 
@@ -47,30 +52,39 @@ class Open : public SystemCall {
 public:
     void Execute() override {
         int file_descriptor = open("/dev/null", O_RDONLY);
-        if (file_descriptor != -1) {
-            close(file_descriptor);
+        if (file_descriptor == -1) {
+            throw std::runtime_error("Open failed");
         }
+        close(file_descriptor);
     }
 };
 
 class Close : public SystemCall {
 public:
     void Execute() override {
-        close(STDIN_FILENO);
+        if (close(STDIN_FILENO) == -1) {
+            throw std::runtime_error("Close failed");
+        }
     }
 };
 
 class Creat : public SystemCall {
 public:
     void Execute() override {
-        creat("/tmp/test.txt", 0644);
+        int file_descriptor = creat("/tmp/test.txt", 0644);
+        if (file_descriptor == -1) {
+            throw std::runtime_error("Creat failed");
+        }
+        close(file_descriptor);
     }
 };
 
 class Unlink : public SystemCall {
 public:
     void Execute() override {
-        unlink("/tmp/test.txt");
+        if (unlink("/tmp/test.txt") == -1) {
+            throw std::runtime_error("Unlink failed");
+        }
     }
 };
 
@@ -78,8 +92,7 @@ class GetPid : public SystemCall {
 public:
     void Execute() override {
         pid_t pid = getpid();
-        printf("Process ID: %d\n", pid);
-        fflush(stdout);
+        std::cout << "Process ID: " << pid << '\n';
     }
 };
 
@@ -92,42 +105,29 @@ public:
 
 using SystemCallVariant = std::variant<Exit, Read, Write, Open, Close, Creat, Unlink, GetPid, Sleep>;
 
-inline bool operator==(const SystemCallVariant& lhs, const SystemCallVariant& rhs) {
-    return std::visit([](const auto& lhs, const auto& rhs) { return lhs == rhs; }, lhs, rhs);
-}
-
-inline bool operator!=(const SystemCallVariant& lhs, const SystemCallVariant& rhs) {
-    return !(lhs == rhs);
-}
-
-std::ostream& operator<<(std::ostream& os, const SystemCallVariant& scv) {
-    std::visit([&os](const auto& v) { os << v; }, scv);
-    return os;
-}
-
-std::istream& operator>>(std::istream& is, SystemCallVariant& scv) {
+std::istream& operator>>(std::istream& is, std::unique_ptr<SystemCall>& sc) {
     std::string input;
     is >> input;
     if (input == "exit"sv) {
-        scv = Exit{};
+        sc = std::make_unique<Exit>();
     } else if (input == "read"sv) {
-        scv = Read{};
+        sc = std::make_unique<Read>();
     } else if (input == "write"sv) {
-        scv = Write{};
+        sc = std::make_unique<Write>();
     } else if (input == "open"sv) {
-        scv = Open{};
+        sc = std::make_unique<Open>();
     } else if (input == "close"sv) {
-        scv = Close{};
+        sc = std::make_unique<Close>();
     } else if (input == "creat"sv) {
-        scv = Creat{};
+        sc = std::make_unique<Creat>();
     } else if (input == "unlink"sv) {
-        scv = Unlink{};
+        sc = std::make_unique<Unlink>();
     } else if (input == "getpid"sv) {
-        scv = GetPid{};
+        sc = std::make_unique<GetPid>();
     } else if (input == "sleep"sv) {
-        scv = Sleep{};
+        sc = std::make_unique<Sleep>();
     } else {
-        throw std::invalid_argument{"Invalid system call"};
+        throw std::invalid_argument("Invalid system call");
     }
     return is;
 }
@@ -135,9 +135,9 @@ std::istream& operator>>(std::istream& is, SystemCallVariant& scv) {
 int main() {
     while (true) {
         try {
-            SystemCallVariant scv;
-            std::cin >> scv;
-            scv.Execute();
+            std::unique_ptr<SystemCall> sc;
+            std::cin >> sc;
+            sc->Execute();
         } catch (const std::exception& e) {
             std::cerr << "Error: " << e.what() << '\n';
             break;
