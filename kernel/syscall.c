@@ -1,52 +1,30 @@
-#include <stdint.h>
-#include <stddef.h>
+#include "syscalls.h"
 #include <fcntl.h>
 #include <unistd.h>
-#include <sys/stat.h>
 #include <errno.h>
+#include <stdio.h>
 
-/* Define system call numbers */
-#define SYS_WRITE    1
-#define SYS_READ     2
-#define SYS_OPEN     3
-#define SYS_CLOSE    4
-#define SYS_LSEEK    5
-#define SYS_FSTAT    6
-#define SYS_EXIT     60
-/* Add more system call numbers as needed */
+// Simple error logging function
+void log_error(const char *message) {
+    fprintf(stderr, "Error: %s (errno: %d)\n", message, errno);
+}
 
-/* System call handlers */
-size_t sys_write(int fd, const void *buf, size_t count);
-size_t sys_read(int fd, void *buf, size_t count);
-int sys_open(const char *path, int flags, int mode);
-int sys_close(int fd);
-off_t sys_lseek(int fd, off_t offset, int whence);
-int sys_fstat(int fd, struct stat *st);
-void sys_exit(int status);
-/* Add more system call handlers as needed */
-
-/* System call table */
+// System call table
 typedef size_t (*syscall_handler_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
-syscall_handler_t syscall_table[] = {
-    NULL,
-    (syscall_handler_t)sys_write,
-    (syscall_handler_t)sys_read,
-    (syscall_handler_t)sys_open,
-    (syscall_handler_t)sys_close,
-    (syscall_handler_t)sys_lseek,
-    (syscall_handler_t)sys_fstat,
-    NULL, /* Placeholder for future system calls */
-    NULL, /* Placeholder for future system calls */
-    NULL, /* Placeholder for future system calls */
-    NULL, /* Placeholder for future system calls */
-    (syscall_handler_t)sys_exit,
-    /* Add more system call handlers as needed */
+static const syscall_handler_t syscall_table[SYS_MAX] = {
+    [SYS_WRITE] = (syscall_handler_t)sys_write,
+    [SYS_READ] = (syscall_handler_t)sys_read,
+    [SYS_OPEN] = (syscall_handler_t)sys_open,
+    [SYS_CLOSE] = (syscall_handler_t)sys_close,
+    [SYS_LSEEK] = (syscall_handler_t)sys_lseek,
+    [SYS_FSTAT] = (syscall_handler_t)sys_fstat,
+    [SYS_EXIT] = (syscall_handler_t)sys_exit,
 };
 
-/* System call entry point */
+// System call entry point
 size_t syscall_entry(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4) {
-    if (syscall_num >= sizeof(syscall_table) / sizeof(syscall_table[0]) || syscall_table[syscall_num] == NULL) {
-        /* Invalid system call number */
+    if (syscall_num >= SYS_MAX || syscall_table[syscall_num] == NULL) {
+        log_error("Invalid system call number");
         errno = ENOSYS;
         return (size_t)-1;
     }
@@ -54,10 +32,11 @@ size_t syscall_entry(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, uint64_
     return syscall_table[syscall_num](arg1, arg2, arg3, arg4, 0);
 }
 
-/* System call handlers implementation */
+// System call handlers implementation
 size_t sys_write(int fd, const void *buf, size_t count) {
     ssize_t result = write(fd, buf, count);
     if (result < 0) {
+        log_error("sys_write failed");
         return (size_t)-1;
     }
     return (size_t)result;
@@ -66,6 +45,7 @@ size_t sys_write(int fd, const void *buf, size_t count) {
 size_t sys_read(int fd, void *buf, size_t count) {
     ssize_t result = read(fd, buf, count);
     if (result < 0) {
+        log_error("sys_read failed");
         return (size_t)-1;
     }
     return (size_t)result;
@@ -74,6 +54,7 @@ size_t sys_read(int fd, void *buf, size_t count) {
 int sys_open(const char *path, int flags, int mode) {
     int fd = open(path, flags, mode);
     if (fd < 0) {
+        log_error("sys_open failed");
         return -1;
     }
     return fd;
@@ -82,6 +63,7 @@ int sys_open(const char *path, int flags, int mode) {
 int sys_close(int fd) {
     int result = close(fd);
     if (result < 0) {
+        log_error("sys_close failed");
         return -1;
     }
     return 0;
@@ -90,6 +72,7 @@ int sys_close(int fd) {
 off_t sys_lseek(int fd, off_t offset, int whence) {
     off_t result = lseek(fd, offset, whence);
     if (result == (off_t)-1) {
+        log_error("sys_lseek failed");
         return (off_t)-1;
     }
     return result;
@@ -98,6 +81,7 @@ off_t sys_lseek(int fd, off_t offset, int whence) {
 int sys_fstat(int fd, struct stat *st) {
     int result = fstat(fd, st);
     if (result < 0) {
+        log_error("sys_fstat failed");
         return -1;
     }
     return 0;
@@ -107,54 +91,77 @@ void sys_exit(int status) {
     _exit(status);
 }
 
-/* Add more system call handlers as needed */
-
-int main() {
-    /* Test the system call implementation */
-
-    /* Test sys_open and sys_write */
+// Main function for testing
+int main(void) {
+    // Test sys_open and sys_write
     int fd = sys_open("testfile.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd != -1) {
         const char *message = "Hello, world!";
-        sys_write(fd, message, 13);
+        size_t bytes_written = sys_write(fd, message, 13);
+        printf("Bytes written: %zu\n", bytes_written);
         sys_close(fd);
+    } else {
+        log_error("Failed to open file for writing");
+        return 1;
     }
 
-    /* Test sys_read */
+    // Test sys_read
     fd = sys_open("testfile.txt", O_RDONLY, 0);
     if (fd != -1) {
-        char buffer[20];
+        char buffer[20] = {0};
         size_t bytes_read = sys_read(fd, buffer, sizeof(buffer) - 1);
-        buffer[bytes_read] = '\0';
-        sys_close(printf("Read from file: %s\n", buffer);
-}
-
-
-/* Test sys_lseek and sys_read */
-fd = sys_open("testfile.txt", O_RDONLY, 0);
-if (fd != -1) {
-    sys_lseek(fd, 7, SEEK_SET);
-    char buffer[20];
-    size_t bytes_read = sys_read(fd, buffer, sizeof(buffer) - 1);
-    buffer[bytes_read] = '\0';
-    printf("Read from offset 7: %s\n", buffer);
-    sys_close(fd);
-}
-
-/* Test sys_fstat */
-fd = sys_open("testfile.txt", O_RDONLY, 0);
-if (fd != -1) {
-    struct stat st;
-    if (sys_fstat(fd, &st) == 0) {
-        printf("File size: %lld bytes\n", (long long)st.st_size);
-        printf("File mode: %o\n", st.st_mode & 0777);
+        if (bytes_read != (size_t)-1) {
+            printf("Read from file: %s\n", buffer);
+        } else {
+            log_error("Failed to read from file");
+        }
+        sys_close(fd);
+    } else {
+        log_error("Failed to open file for reading");
+        return 1;
     }
-    sys_close(fd);
-}
 
-/* Test sys_exit */
-printf("Exiting with code 0\n");
-sys_exit(0);
+    // Test sys_lseek and sys_read
+    fd = sys_open("testfile.txt", O_RDONLY, 0);
+    if (fd != -1) {
+        off_t new_offset = sys_lseek(fd, 7, SEEK_SET);
+        if (new_offset != (off_t)-1) {
+            char buffer[20] = {0};
+            size_t bytes_read = sys_read(fd, buffer, sizeof(buffer) - 1);
+            if (bytes_read != (size_t)-1) {
+                printf("Read from offset %lld: %s\n", (long long)new_offset, buffer);
+            } else {
+                log_error("Failed to read from file after seek");
+            }
+        } else {
+            log_error("Failed to seek in file");
+        }
+        sys_close(fd);
+    } else {
+        log_error("Failed to open file for seeking");
+        return 1;
+    }
 
-return 0; /* This will not be reached due to sys_exit */
+    // Test sys_fstat
+    fd = sys_open("testfile.txt", O_RDONLY, 0);
+    if (fd != -1) {
+        struct stat st;
+        if (sys_fstat(fd, &st) == 0) {
+            printf("File size: %lld bytes\n", (long long)st.st_size);
+            printf("File mode: %o\n", st.st_mode & 0777);
+        } else {
+            log_error("Failed to get file stats");
+        }
+        sys_close(fd);
+    } else {
+        log_error("Failed to open file for stat");
+        return 1;
+    }
+
+    // Test sys_exit
+    printf("Exiting with code 0\n");
+    sys_exit(0);
+
+    // This line should never be reached
+    return 1;
 }
