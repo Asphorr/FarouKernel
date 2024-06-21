@@ -1,63 +1,71 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <map>
+#include <cmath>
+#include <numeric>
+#include <execution>
 
-#define MAX_ARGS 64
+struct KeyValuePair {
+   std::string key;
+   int value;
+};
 
-int main(void) {
-    // Parse command line arguments
-    char **args = malloc(sizeof(char *) * MAX_ARGS);
-    int argc = parse_command_line(args, MAX_ARGS);
+struct ValueComparator {
+   bool operator()(const KeyValuePair& lhs, const KeyValuePair& rhs) const {
+       return lhs.value < rhs.value;
+   }
+};
 
-    // Initialize the system call table
-    initialize_syscall_table();
+std::map<std::string, int> readDataFromFile(const char* filename) {
+   std::ifstream input(filename);
+   if (!input.is_open()) {
+       std::cerr << "Could not open file: " << filename << std::endl;
+       return {};
+   }
 
-    // Set up the program environment
-    setup_program_environment();
-
-    // Start the program
-    start_program(argc, args);
-
-    // Wait for the program to finish
-    wait_for_program_to_finish();
-
-    // Clean up and exit
-    cleanup_and_exit();
-
-    return 0;
+   std::map<std::string, int> data;
+   std::string line;
+   while (std::getline(input, line)) {
+       auto keyValuePair = splitLineIntoKeyAndValue(line);
+       data[keyValuePair.first] = stoi(keyValuePair.second);
+   }
+   input.close();
+   return data;
 }
 
-int parse_command_line(char **args, int max_args) {
-    // Parse the command line arguments
-    int argc = 0;
-    char *argv[max_args];
-
-    while ((argc < max_args) && (*++argv = strtok(NULL, " \t")) != NULL) {
-        args[argc++] = argv[0];
-    }
-
-    return argc;
+void processData(std::map<std::string, int>& data) {
+   std::transform(data.begin(), data.end(), data.begin(),
+       [](auto& pair) {
+           if (pair.second > 10) {
+               pair.second *= 2;
+               pair.first += "_doubled";
+           } else {
+               pair.second /= 2;
+               pair.first += "_halved";
+           }
+           return pair;
+       });
 }
 
-void setup_program_environment() {
-    // Set up the program environment
-    // ...
+void writeOutputToFile(const char* filename, const std::map<std::string, int>& data) {
+   std::ofstream output;
+   output.open(filename);
+   if (!output.is_open()) {
+       std::cerr << "Could not open file: " << filename << std::endl;
+       return;
+   }
+
+   for (const auto& pair : data) {
+       output << pair.first << ": " << pair.second << "\n";
+   }
+   output.close();
 }
 
-void start_program(int argc, char **args) {
-    // Start the program
-    // ...
-}
-
-void wait_for_program_to_finish() {
-    // Wait for the program to finish
-    // ...
-}
-
-void cleanup_and_exit() {
-    // Clean up and exit
-    // ...
+int main() {
+   std::map<std::string, int> data = readDataFromFile("input.txt");
+   processData(data);
+   writeOutputToFile("output.txt", data);
+   return 0;
 }
