@@ -77,4 +77,34 @@ bool paging_is_page_present(uint64_t virt_addr) {
     pt = get_next_level(pd, PD_INDEX(virt_addr), false);
     if (!pt) return false;
 
-    return (pt[PT_INDEX(virt_addr)] &
+    return (pt[PT_INDEX(virt_addr)] & PAGE_PRESENT) != 0;
+}
+
+uint64_t paging_get_physical_address(uint64_t virt_addr) {
+    page_table_entry *pdpt, *pd, *pt;
+
+    pdpt = get_next_level(pml4, PML4_INDEX(virt_addr), false);
+    if (!pdpt) return 0;
+
+    pd = get_next_level(pdpt, PDPT_INDEX(virt_addr), false);
+    if (!pd) return 0;
+
+    pt = get_next_level(pd, PD_INDEX(virt_addr), false);
+    if (!pt) return 0;
+
+    if (!(pt[PT_INDEX(virt_addr)] & PAGE_PRESENT)) {
+        return 0;
+    }
+
+    return (pt[PT_INDEX(virt_addr)] & ~0xFFF) | (virt_addr & 0xFFF);
+}
+
+void paging_load_directory(uint64_t pml4_addr) {
+    __asm__ volatile("mov %0, %%cr3" : : "r" (pml4_addr));
+}
+
+uint64_t paging_get_directory(void) {
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r" (cr3));
+    return cr3;
+}
