@@ -1,63 +1,55 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <unordered_map>
+#include <algorithm>
+#include <execution>
 
-#define MAX_ARGS 64
+using DataMap = std::unordered_map<std::string, int>;
 
-int main(void) {
-    // Parse command line arguments
-    char **args = malloc(sizeof(char *) * MAX_ARGS);
-    int argc = parse_command_line(args, MAX_ARGS);
-
-    // Initialize the system call table
-    initialize_syscall_table();
-
-    // Set up the program environment
-    setup_program_environment();
-
-    // Start the program
-    start_program(argc, args);
-
-    // Wait for the program to finish
-    wait_for_program_to_finish();
-
-    // Clean up and exit
-    cleanup_and_exit();
-
-    return 0;
-}
-
-int parse_command_line(char **args, int max_args) {
-    // Parse the command line arguments
-    int argc = 0;
-    char *argv[max_args];
-
-    while ((argc < max_args) && (*++argv = strtok(NULL, " \t")) != NULL) {
-        args[argc++] = argv[0];
+DataMap readDataFromFile(const std::string& filename) {
+    std::ifstream input(filename);
+    if (!input) {
+        std::cerr << "Could not open file: " << filename << '\n';
+        return {};
     }
 
-    return argc;
+    DataMap data;
+    std::string key;
+    int value;
+    while (input >> key >> value) {
+        data[std::move(key)] = value;
+    }
+    return data;
 }
 
-void setup_program_environment() {
-    // Set up the program environment
-    // ...
+void processData(DataMap& data) {
+    std::for_each(std::execution::par_unseq, data.begin(), data.end(),
+        [](auto& pair) {
+            if (pair.second > 10) {
+                pair.second *= 2;
+                pair.first += "_doubled";
+            } else {
+                pair.second /= 2;
+                pair.first += "_halved";
+            }
+        });
 }
 
-void start_program(int argc, char **args) {
-    // Start the program
-    // ...
+void writeOutputToFile(const std::string& filename, const DataMap& data) {
+    std::ofstream output(filename);
+    if (!output) {
+        std::cerr << "Could not open file: " << filename << '\n';
+        return;
+    }
+
+    for (const auto& [key, value] : data) {
+        output << key << ": " << value << '\n';
+    }
 }
 
-void wait_for_program_to_finish() {
-    // Wait for the program to finish
-    // ...
-}
-
-void cleanup_and_exit() {
-    // Clean up and exit
-    // ...
+int main() {
+    auto data = readDataFromFile("input.txt");
+    processData(data);
+    writeOutputToFile("output.txt", data);
 }
