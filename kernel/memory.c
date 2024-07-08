@@ -1,86 +1,118 @@
 #include <memory>
+#include <vector>
 #include <algorithm>
 #include <span>
+#include <numeric>
+#include <cstdio>
+#include <cassert>
 
 template <typename T>
-struct MemoryBlock {
- std::unique_ptr<T[]> data;
- std::size_t size;
+class MemoryManager {
+private:
+    struct Block {
+        std::unique_ptr<T[]> data;
+        std::size_t size;
+        bool is_free;
+
+        Block(std::size_t s) : data(std::make_unique<T[]>(s)), size(s), is_free(true) {}
+    };
+    
+    std::vector<Block> blocks;
+    std::size_t total_memory{0};
+
+public:
+    T* allocate(std::size_t size) {
+        auto it = std::find_if(blocks.begin(), blocks.end(), 
+            [size](const Block& b) { return b.is_free && b.size >= size; });
+
+        if (it != blocks.end()) {
+            it->is_free = false;
+            if (it->size > size) {
+                split_block(it, size);
+            }
+            return it->data.get();
+        }
+
+        blocks.emplace_back(size);
+        total_memory += size;
+        blocks.back().is_free = false;
+        return blocks.back().data.get();
+    }
+
+    void deallocate(T* address) {
+        auto it = find_block(address);
+        if (it != blocks.end()) {
+            it->is_free = true;
+            merge_adjacent_free_blocks(it);
+        }
+    }
+
+    void printMemoryState() const {
+        std::size_t free_memory = std::accumulate(blocks.begin(), blocks.end(), 0ULL,
+            [](std::size_t sum, const Block& block) { return sum + (block.is_free ? block.size : 0); });
+        std::printf("Total Memory: %zu, Free Memory: %zu, Used Memory: %zu\n", 
+                    total_memory, free_memory, total_memory - free_memory);
+    }
+
+    T* reallocate(T* address, std::size_t newSize) {
+        auto it = find_block(address);
+        if (it == blocks.end()) return nullptr;
+
+        if (newSize <= it->size) {
+            if (it->size > newSize) {
+                split_block(it, newSize);
+            }
+            return it->data.get();
+        }
+
+        T* new_address = allocate(newSize);
+        if (new_address) {
+            std::copy_n(it->data.get(), it->size, new_address);
+            deallocate(address);
+        }
+        return new_address;
+    }
+
+    bool copy(T* sourceAddress, T* destinationAddress, std::size_t size) {
+        auto srcIt = find_block(sourceAddress);
+        auto destIt = find_block(destinationAddress);
+        if (srcIt == blocks.end() || destIt == blocks.end()) return false;
+
+        std::size_t copySize = std::min({srcIt->size, destIt->size, size});
+        std::copy_n(srcIt->data.get(), copySize, destIt->data.get());
+        return true;
+    }
+
+    std::span<T> getMemoryBlock(T* address) const {
+        auto it = find_block(address);
+        return (it != blocks.end()) ? std::span<T>(it->data.get(), it->size) : std::span<T>();
+    }
+
+private:
+    auto find_block(T* address) const {
+        return std::find_if(blocks.begin(), blocks.end(), [address](const Block& block) {
+            return block.data.get() <= address && address < block.data.get() + block.size;
+        });
+    }
+
+    void split_block(typename std::vector<Block>::iterator it, std::size_t size) {
+        assert(it->size > size);
+        std::size_t remaining_size = it->size - size;
+        it->size = size;
+        blocks.emplace(std::next(it), remaining_size);
+    }
+
+    void merge_adjacent_free_blocks(typename std::vector<Block>::iterator it) {
+        while (std::next(it) != blocks.end() && std::next(it)->is_free) {
+            it->size += std::next(it)->size;
+            blocks.erase(std::next(it));
+        }
+        if (it != blocks.begin()) {
+            auto prev = std::prev(it);
+            if (prev->is_free) {
+                prev->size += it->size;
+                blocks.erase(it);
+            }
+        }
+    }
 };
-
-template <typename T>
-using BlockList = std::vector<MemoryBlock<T>>;
-
-template <typename T>
-void allocate(BlockList<T>& list, std::size_t size) {
- list.emplace_back();
- auto& block = list.back();
- block.data = std::make_unique<T[]>(size);
- block.size = size;
-}
-
-template <typename T>
-void deallocate(BlockList<T>& list, T* address) {
- auto iter = std::find_if(list.begin(), list.end(), [address](const MemoryBlock<T>& block) {
-     return block.data.get() <= address && address < block.data.get() + block.size;
- });
- if (iter != list.end()) {
-     list.erase(iter);
- }
-}
-
-template <typename T>
-void printFreeMemory(const BlockList<T>& list) {
- std::printf("Total Free Memory: %zu\n", std::accumulate(list.begin(), list.end(), 0, [](auto acc, const MemoryBlock<T>& block) {
-     return acc + block.size;
- }));
-}
-
-template <typename T>
-void reallocate(BlockList<T>& list, T* address, std::size_t newSize) {
- auto iter = std::find_if(list.begin(), list.end(), [address](const MemoryBlock<T>& block) {
-     return block.data.get() <= address && address < block.data.get() + block.size;
- });
- if (iter != list.end()) {
-     iter->data = std::make_unique<T[]>(newSize);
-     iter->size = newSize;
- }
-}
-
-template <typename T>
-void resize(BlockList<T>& list, T* address, std::size_t newSize) {
- auto iter = std::find_if(list.begin(), list.end(), [address](const MemoryBlock<T>& block) {
-     return block.data.get() <= address && address < block.data.get() + block.size;
- });
- if (iter != list.end()) {
-     auto newData = std::make_unique<T[]>(newSize);
-     std::copy(iter->data.get(), iter->data.get() + std::min(iter->size, newSize), newData.get());
-     iter->data = std::move(newData);
-     iter->size = newSize;
- }
-}
-
-template <typename T>
-void copy(BlockList<T>& list, T* sourceAddress, T* destinationAddress, std::size_t size) {
- auto sourceIter = std::find_if(list.begin(), list.end(), [sourceAddress](const MemoryBlock<T>& block) {
-     return block.data.get() <= sourceAddress && sourceAddress < block.data.get() + block.size;
- });
- auto destinationIter = std::find_if(list.begin(), list.end(), [destinationAddress](const MemoryBlock<T>& block) {
-     return block.data.get() <= destinationAddress && destinationAddress < block.data.get() + block.size;
- });
- if (sourceIter != list.end() && destinationIter != list.end()) {
-     std::copy(sourceIter->data.get(), sourceIter->data.get() + std::min(sourceIter->size, size), destinationIter->data.get());
- }
-}
-
-template <typename T>
-constexpr std::span<T> getMemoryBlock(const BlockList<T>& list, T* address) {
- auto iter = std::find_if(list.begin(), list.end(), [address](const MemoryBlock<T>& block) {
-     return block.data.get() <= address && address < block.data.get() + block.size;
- });
- if (iter != list.end()) {
-     return std::span<T>(iter->data.get(), iter->size);
- } else {
-     return std::span<T>();
- }
-}
