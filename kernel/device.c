@@ -8,23 +8,22 @@
 #include <asm/ioctl.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/mutex.h>  // Added for thread safety
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Mikhail");
 MODULE_DESCRIPTION("Optimized Character Device Driver");
 
-// Define constants for the module parameters
-#define MAJOR_NUM 245 // Major number for the character device
-#define MINOR_NUM 0   // Minor number for the character device
 #define BUFFER_SIZE 1024 // Size of the character device buffer
 
 // Structure representing the character device
 typedef struct _my_device {
-    struct cdev cdev;     // The character device structure
-    struct class *class; // Pointer to the device's class
-    dev_t devno;          // Device number
-    atomic_t open_count; // Number of times the device has been opened
-    char *buffer;        // Buffer for storing data
+    struct cdev cdev;      // The character device structure
+    struct class *class;   // Pointer to the device's class
+    dev_t devno;           // Device number
+    atomic_t open_count;   // Number of times the device has been opened
+    char *buffer;          // Buffer for storing data
+    struct mutex lock;     // Mutex for thread safety
 } my_device_t;
 
 // Function prototypes
@@ -35,85 +34,84 @@ ssize_t my_write(struct file *file, const char __user *buf, size_t count, loff_t
 long my_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 
 // Global variables
-static my_device_t *my_device; // The character device object
+static my_device_t *my_device;
 
 // Initialize the character device
 static int __init my_init(void)
 {
     int retval;
+    dev_t devno;
 
     // Allocate memory for the character device structure
-    my_device = kmalloc(sizeof(my_device_t), GFP_KERNEL);
+    my_device = kzalloc(sizeof(my_device_t), GFP_KERNEL);
     if (!my_device) {
-        pr_err("%s: Failed to allocate memory for the character device structure\n", __func__);
+        pr_err("%s: Failed to allocate memory for device structure\n", __func__);
         return -ENOMEM;
     }
 
-    // Allocate memory for the character device buffer
-    my_device->buffer = kmalloc(BUFFER_SIZE, GFP_KERNEL);
+    // Allocate memory for the character device buffer and initialize
+    my_device->buffer = kzalloc(BUFFER_SIZE, GFP_KERNEL);
     if (!my_device->buffer) {
-        pr_err("%s: Failed to allocate memory for the character device buffer\n", __func__);
+        pr_err("%s: Failed to allocate memory for buffer\n", __func__);
         kfree(my_device);
         return -ENOMEM;
     }
 
-    // Set up the character device structure
-    memset(my_device, 0, sizeof(my_device_t));
-    my_device->cdev.owner = THIS_MODULE;
-    cdev_init(&my_device->cdev, &my_fops);
-    my_device->class = class_create(THIS_MODULE, "myclass");
-    if (IS_ERR(my_device->class)) {
-        pr_err("%s: Failed to create class\n", __func__);
+    // Initialize mutex for thread safety
+    mutex_init(&my_device->lock);
+
+    // Dynamically allocate a major number if MAJOR_NUM is 0
+    retval = alloc_chrdev_region(&devno, 0, 1, "mychar");
+    if (retval < 0) {
+        pr_err("%s: Failed to allocate character device number\n", __func__);
         kfree(my_device->buffer);
         kfree(my_device);
-        return PTR_ERR(my_device->class);
+        return retval;
     }
+    my_device->devno = devno;
 
-    // Register the character device
-    retval = alloc_chrdev_region(&my_device->devno, MINOR_NUM, 1, "mychar");
+    // Initialize the character device structure
+    cdev_init(&my_device->cdev, &my_fops);
+    my_device->cdev.owner = THIS_MODULE;
+
+    // Add the character device to the system
+    retval = cdev_add(&my_device->cdev, my_device->devno, 1);
     if (retval < 0) {
-        pr_err("%s: Failed to register character device\n", __func__);
-        class_destroy(my_device->class);
+        pr_err("%s: Failed to add character device\n", __func__);
+        unregister_chrdev_region(my_device->devno, 1);
         kfree(my_device->buffer);
         kfree(my_device);
         return retval;
     }
 
-    // Add the character device to the system
-    cdev_add(&my_device->cdev, my_device->devno, 1);
+    // Create class and device node
+    my_device->class = class_create(THIS_MODULE, "myclass");
+    if (IS_ERR(my_device->class)) {
+        pr_err("%s: Failed to create device class\n", __func__);
+        cdev_del(&my_device->cdev);
+        unregister_chrdev_region(my_device->devno, 1);
+        kfree(my_device->buffer);
+        kfree(my_device);
+        return PTR_ERR(my_device->class);
+    }
+    device_create(my_device->class, NULL, my_device->devno, NULL, "mychar");
 
-    // Create the character device node
-    device_create(my_device->class, NULL, my_device->devno, NULL, "mychar%d", MINOR_NUM);
-
-    // Print a message indicating successful initialization
-    pr_info("%s: Initialized character device %s\n", __func__, "/dev/mychar");
-
+    pr_info("%s: Character device initialized\n", __func__);
     return 0;
 }
 
-// Cleanup function called when the kernel module is removed
+// Cleanup function called when the module is removed
 static void __exit my_cleanup(void)
 {
-    // Remove the character device node
     device_destroy(my_device->class, my_device->devno);
-
-    // Remove the character device from the system
+    class_destroy(my_device->class);
     cdev_del(&my_device->cdev);
-
-    // Unregister the character device
     unregister_chrdev_region(my_device->devno, 1);
 
-    // Destroy the class
-    class_destroy(my_device->class);
-
-    // Free the memory allocated for the character device buffer
     kfree(my_device->buffer);
-
-    // Free the memory allocated for the character device structure
     kfree(my_device);
 
-    // Print a message indicating successful cleanup
-    pr_info("%s: Cleaned up character device %s\n", __func__, "/dev/mychar");
+    pr_info("%s: Character device removed\n", __func__);
 }
 
 // File operations structure for the character device
@@ -132,21 +130,15 @@ int my_open(struct inode *inode, struct file *file)
     // Increment the open count
     atomic_inc(&my_device->open_count);
 
-    // Print a message indicating that the device was opened
-    pr_debug("%s: Opened character device %s\n", __func__, "/dev/mychar");
-
+    pr_debug("%s: Device opened\n", __func__);
     return 0;
 }
 
 // Release method for the character device
 int my_release(struct inode *inode, struct file *file)
 {
-    // Decrement the open count
     atomic_dec(&my_device->open_count);
-
-    // Print a message indicating that the device was closed
-    pr_debug("%s: Closed character device %s\n", __func__, "/dev/mychar");
-
+    pr_debug("%s: Device closed\n", __func__);
     return 0;
 }
 
@@ -156,24 +148,24 @@ ssize_t my_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
     ssize_t retval;
     int count;
 
-    // Check whether there are any characters left to read from the buffer
+    // Protect buffer access with mutex
+    if (mutex_lock_interruptible(&my_device->lock))
+        return -ERESTARTSYS;
+
     count = min(len, BUFFER_SIZE - (int)*off);
     if (count <= 0) {
-        pr_warn("%s: No more data available to read\n", __func__);
+        mutex_unlock(&my_device->lock);
         return 0;
     }
 
-    // Copy the data from the buffer into userspace
     retval = copy_to_user(buf, my_device->buffer + *off, count);
     if (retval) {
-        pr_err("%s: Failed to copy data to userspace\n", __func__);
+        mutex_unlock(&my_device->lock);
         return -EFAULT;
     }
 
-    // Update the offset
     *off += count;
-
-    // Return the number of bytes copied
+    mutex_unlock(&my_device->lock);
     return count;
 }
 
@@ -183,24 +175,23 @@ ssize_t my_write(struct file *filp, const char __user *buf, size_t len, loff_t *
     ssize_t retval;
     int count;
 
-    // Check whether we've reached the end of the buffer
+    if (mutex_lock_interruptible(&my_device->lock))
+        return -ERESTARTSYS;
+
     count = min(len, BUFFER_SIZE - (int)*off);
     if (count <= 0) {
-        pr_warn("%s: Reached maximum capacity of buffer\n", __func__);
+        mutex_unlock(&my_device->lock);
         return 0;
     }
 
-    // Copy the data from userspace into the buffer
     retval = copy_from_user(my_device->buffer + *off, buf, count);
     if (retval) {
-        pr_err("%s: Failed to copy data from userspace\n", __func__);
+        mutex_unlock(&my_device->lock);
         return -EFAULT;
     }
 
-    // Update the offset
     *off += count;
-
-    // Return the number of bytes copied
+    mutex_unlock(&my_device->lock);
     return count;
 }
 
@@ -208,16 +199,10 @@ ssize_t my_write(struct file *filp, const char __user *buf, size_t len, loff_t *
 long my_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     switch (cmd) {
-case MYCHAR_IOC_MAGIC:
-// Handle custom ioctls here
-break;
-default:
-// Delegate unknown ioctls to the default handler
-return -ENOTTY;
-}
-
-
-return 0;
+    // Handle IOCTL commands here
+    default:
+        return -ENOTTY;
+    }
 }
 
 module_init(my_init);
