@@ -1,165 +1,212 @@
-; boot.asm
+; boot.asm - Improved Version
+
 global start
 extern long_mode_start
 
 section .text
-bits 32
+    bits 32
+
+; Define constants for readability
+PAGE_PRESENT     equ 1
+PAGE_WRITABLE    equ 2
+PAGE_HUGE        equ 0x80
+
+EFER_MSR         equ 0xC0000080
+EFER_LMA         equ (1 << 10) ; Long Mode Active
+EFER_LME         equ (1 << 8)  ; Long Mode Enable
+
+; Entry point
 start:
+    ; Initialize stack
     mov esp, stack_top
 
+    ; Perform system checks
     call check_multiboot
     call check_cpuid
     call check_long_mode
 
+    ; Setup paging structures
     call setup_page_tables
     call enable_paging
 
-    ; load the 64-bit GDT
+    ; Load the 64-bit GDT
     lgdt [gdt64.pointer]
 
+    ; Jump to 64-bit long mode entry point
     jmp gdt64.code:long_mode_start
 
-    ; print `OK` to screen
-    mov dword [0xb8000], 0x2f4b2f4f
-    hlt
+    ; Unreachable code (optional OK message)
+    ; To display after jumping, consider using a different approach
+    ; mov dword [0xb8000], 0x4F4B
+    ; hlt
 
+;----------------------------------------
+; System Check: Multiboot Signature
+; Expects: eax contains multiboot magic number
+; Returns: void or jumps to error
+;----------------------------------------
 check_multiboot:
     cmp eax, 0x36d76289
-    jne .no_multiboot
+    jne no_multiboot
     ret
-.no_multiboot:
-    mov al, "0"
+
+no_multiboot:
+    mov al, '0'           ; Error code '0'
     jmp error
 
+;----------------------------------------
+; System Check: CPUID Support
+; Checks if CPUID instruction is supported
+; Returns: void or jumps to error
+;----------------------------------------
 check_cpuid:
-    ; Check if CPUID is supported by attempting to flip the ID bit (bit 21)
-    ; in the FLAGS register. If we can flip it, CPUID is available.
-
-    ; Copy FLAGS in to EAX via stack
     pushfd
     pop eax
-
-    ; Copy to ECX as well for comparing later on
     mov ecx, eax
 
-    ; Flip the ID bit
-    xor eax, 1 << 21
-
-    ; Copy EAX to FLAGS via the stack
+    ; Attempt to toggle ID bit (bit 21) in EFLAGS
+    xor eax, (1 << 21)
     push eax
     popfd
 
-    ; Copy FLAGS back to EAX (with the flipped bit if CPUID is supported)
+    ; Read back EFLAGS
     pushfd
     pop eax
 
-    ; Restore FLAGS from the old version stored in ECX (i.e. flipping the
-    ; ID bit back if it was ever flipped).
+    ; Restore original EFLAGS
     push ecx
     popfd
 
-    ; Compare EAX and ECX. If they are equal then that means the bit
-    ; wasn't flipped, and CPUID isn't supported.
+    ; Compare EFLAGS to see if ID bit changed
     cmp eax, ecx
-    je .no_cpuid
+    je no_cpuid            ; CPUID not supported
     ret
-.no_cpuid:
-    mov al, "1"
+
+no_cpuid:
+    mov al, '1'           ; Error code '1'
     jmp error
 
+;----------------------------------------
+; System Check: Long Mode Support
+; Uses CPUID to verify long mode capability
+; Returns: void or jumps to error
+;----------------------------------------
 check_long_mode:
-    ; test if extended processor info in available
-    mov eax, 0x80000000    ; implicit argument for cpuid
-    cpuid                  ; get highest supported argument
-    cmp eax, 0x80000001    ; it needs to be at least 0x80000001
-    jb .no_long_mode       ; if it's less, the CPU is too old for long mode
+    mov eax, 0x80000000    ; Extended CPUID functions
+    cpuid
+    cmp eax, 0x80000001
+    jb no_long_mode        ; CPU too old for long mode
 
-    ; use extended info to test if long mode is available
-    mov eax, 0x80000001    ; argument for extended processor info
-    cpuid                  ; returns various feature bits in ecx and edx
-    test edx, 1 << 29      ; test if the LM-bit is set in the D-register
-    jz .no_long_mode       ; If it's not set, there is no long mode
+    ; Check long mode flag in CPUID
+    mov eax, 0x80000001
+    cpuid
+    test edx, (1 << 29)     ; EDX bit 29 == LM flag
+    jz no_long_mode        ; Long mode not supported
+
     ret
-.no_long_mode:
-    mov al, "2"
+
+no_long_mode:
+    mov al, '2'           ; Error code '2'
     jmp error
 
+;----------------------------------------
+; Setup Page Tables for 64-bit Paging
+; Initializes P4, P3, and P2 tables with 2MiB page mappings
+;----------------------------------------
 setup_page_tables:
-    ; map first P4 entry to P3 table
+    ; Initialize P4 table entry
     mov eax, p3_table
-    or eax, 0b11 ; present + writable
+    or eax, PAGE_PRESENT | PAGE_WRITABLE
     mov [p4_table], eax
+    mov dword [p4_table + 4], 0    ; Upper 32 bits
 
-    ; map first P3 entry to P2 table
+    ; Initialize P3 table entry
     mov eax, p2_table
-    or eax, 0b11 ; present + writable
+    or eax, PAGE_PRESENT | PAGE_WRITABLE
     mov [p3_table], eax
+    mov dword [p3_table + 4], 0    ; Upper 32 bits
 
-    ; map each P2 entry to a huge 2MiB page
-    mov ecx, 0         ; counter variable
+    ; Initialize P2 table entries for 2MiB pages
+    xor ecx, ecx                    ; Counter = 0
 
 .map_p2_table:
-    ; map ecx-th P2 entry to a huge page that starts at address 2MiB*ecx
-    mov eax, 0x200000  ; 2MiB
-    mul ecx            ; start address of ecx-th page
-    or eax, 0b10000011 ; present + writable + huge
-    mov [p2_table + ecx * 8], eax ; map ecx-th entry
+    ; Calculate physical address: ECX * 2MiB
+    mov eax, ecx
+    shl eax, 21                     ; Multiply by 2^21 to get 2MiB
+    or eax, PAGE_PRESENT | PAGE_WRITABLE | PAGE_HUGE
 
-    inc ecx            ; increase counter
-    cmp ecx, 512       ; if counter == 512, the whole P2 table is mapped
-    jne .map_p2_table  ; else map the next entry
+    ; Set P2_table[ECX] = physical address with flags
+    mov [p2_table + ecx * 8], eax  ; Lower 32 bits
+    mov dword [p2_table + ecx * 8 + 4], 0 ; Upper 32 bits (unused)
+
+    inc ecx
+    cmp ecx, 512
+    jne .map_p2_table               ; Repeat for all 512 entries
 
     ret
 
+;----------------------------------------
+; Enable Paging and Transition to Long Mode
+; Configures control registers and enables paging
+;----------------------------------------
 enable_paging:
-    ; load P4 to cr3 register (cpu uses this to access the P4 table)
+    ; Load P4 table address into CR3
     mov eax, p4_table
     mov cr3, eax
 
-    ; enable PAE-flag in cr4 (Physical Address Extension)
+    ; Enable PAE in CR4
     mov eax, cr4
-    or eax, 1 << 5
+    or eax, (1 << 5)                ; CR4.PAE
     mov cr4, eax
 
-    ; set the long mode bit in the EFER MSR (model specific register)
-    mov ecx, 0xC0000080
+    ; Set EFER.LME to enable Long Mode
+    mov ecx, EFER_MSR
     rdmsr
-    or eax, 1 << 8
+    or eax, EFER_LME
     wrmsr
 
-    ; enable paging in the cr0 register
+    ; Enable Paging by setting PG bit in CR0
     mov eax, cr0
-    or eax, 1 << 31
+    or eax, (1 << 31)               ; CR0.PG
     mov cr0, eax
 
     ret
 
-; Prints `ERR: ` and the given error code to screen and hangs.
-; parameter: error code (in ascii) in al
+;----------------------------------------
+; Error Handling
+; Displays an error message on the screen and halts
+; Input: Error code in AL (ASCII character)
+;----------------------------------------
 error:
-    mov dword [0xb8000], 0x4f524f45
-    mov dword [0xb8004], 0x4f3a4f52
-    mov dword [0xb8008], 0x4f204f20
-    mov byte  [0xb800a], al
+    ; Display "ERR: X" on the screen
+    mov dword [0xb8000], 0x52525245      ; "ERR "
+    mov byte  [0xb8004], ':'             ; ':'
+    mov byte  [0xb8005], ' '             ; ' '
+    mov byte  [0xb8006], al              ; Error code
+    mov byte  [0xb8007], 0x0F            ; Attribute byte (bright white on black)
     hlt
 
 section .bss
-align 4096
+    align 4096
 p4_table:
-    resb 4096
+    resb 4096                            ; P4 table (4KiB)
 p3_table:
-    resb 4096
+    resb 4096                            ; P3 table (4KiB)
 p2_table:
-    resb 4096
+    resb 4096                            ; P2 table (4KiB)
 stack_bottom:
-    resb 4096 * 4
+    resb 4096 * 4                        ; Reserve 16KiB for stack
 stack_top:
 
 section .rodata
+    align 16
 gdt64:
-    dq 0 ; zero entry
-.code: equ $ - gdt64
-    dq (1<<43) | (1<<44) | (1<<47) | (1<<53) ; code segment
-.pointer:
-    dw $ - gdt64 - 1
-    dq gdt64
+    dq 0                                 ; Null descriptor
+    ; 64-bit Code Segment Descriptor
+    dq 0x00AF9A000000FFFF                ; Code segment with appropriate flags
+    dq 0x00AF92000000FFFF                ; Data segment with appropriate flags
+gdt64.pointer:
+    dw gdt64_end - gdt64 - 1            ; Limit
+    dq gdt64                             ; Base
+
+gdt64_end:
