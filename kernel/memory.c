@@ -1,234 +1,407 @@
-#include <kernel.h>
-#include <stdint.h>
-#include <string.h>
+#include <memory>
+#include <vector>
+#include <algorithm>
+#include <span>
+#include <numeric>
+#include <cstdio>
+#include <cassert>
+#include <cstddef>
+#include <cstring>
+#include <optional>
+#include <stdexcept>
+#include <iostream>
+#include <mutex>
+#include <shared_mutex>
+#include <unordered_set>
+#include <iomanip>
 
-// Size of the memory pool in bytes
-#define MEMORY_POOL_SIZE 0x100000
+// Logging utility for debugging and error reporting
+enum class LogLevel {
+    INFO,
+    WARNING,
+    ERROR
+};
 
-// Memory pool address
-static void* memory_pool;
-
-// Kernel virtual address space
-static void* kernel_vas;
-
-// User virtual address space
-static void* user_vas;
-
-// Maps a physical address to a virtual address
-static inline void* phys_to_virt(uint32_t phys_addr) {
-    return (void*)((uintptr_t)phys_addr - KERNEL_VIRTUAL_BASE);
+inline void logMessage(LogLevel level, const std::string& message) {
+    static std::mutex log_mutex;
+    std::lock_guard<std::mutex> lock(log_mutex);
+    switch (level) {
+        case LogLevel::INFO: std::cout << "[INFO] "; break;
+        case LogLevel::WARNING: std::cout << "[WARNING] "; break;
+        case LogLevel::ERROR: std::cout << "[ERROR] "; break;
+    }
+    std::cout << message << std::endl;
 }
 
-// Maps a virtual address to a physical address
-static inline uint32_t virt_to_phys(void* virt_addr) {
-    return (uint32_t)((uintptr_t)virt_addr - KERNEL_VIRTUAL_BASE);
-}
+template <typename T>
+class MemoryManager {
+private:
+    struct Block {
+        std::size_t offset;        // Offset in the memory pool
+        std::size_t size;          // Size of the block
+        bool is_free;              // Flag indicating if the block is free
 
-// Initializes the memory management system
-void memory_init(void) {
-    // Initialize the memory pool
-    memory_pool = (void*)malloc(MEMORY_POOL_SIZE);
-    memset(memory_pool, 0, MEMORY_POOL_SIZE);
+        Block(std::size_t off, std::size_t sz, bool free = true)
+            : offset(off), size(sz), is_free(free) {}
+    };
 
-    // Initialize the kernel virtual address space
-    kernel_vas = (void*)malloc(KERNEL_VIRTUAL_SIZE);
-    memset(kernel_vas, 0, KERNEL_VIRTUAL_SIZE);
+    std::unique_ptr<char[]> memory_pool;  // Raw memory pool
+    std::size_t pool_size;                // Total size of the memory pool
+    std::vector<Block> blocks;            // List of memory blocks
 
-    // Initialize the user virtual address space
-    user_vas = (void*)malloc(USER_VIRTUAL_SIZE);
-    memset(user_vas, 0, USER_VIRTUAL_SIZE);
-}
+    mutable std::shared_mutex manager_mutex; // Mutex for thread safety
 
-// Allocates memory from the memory pool
-void* memory_alloc(size_t size) {
-    void* addr = memory_pool;
+    // Set to track allocated block offsets for leak detection
+    std::unordered_set<std::size_t> allocated_blocks;
 
-    // Check if the request fits within the memory pool
-    if (size > MEMORY_POOL_SIZE - sizeof(void*)) {
-        return NULL;
+    // Alignment requirements
+    static constexpr std::size_t alignment = alignof(T);
+
+    // Helper function to align a given size
+    static std::size_t align_up(std::size_t size, std::size_t align) {
+        return (size + align - 1) & ~(align - 1);
     }
 
-    // Calculate the number of blocks required
-    size_t num_blocks = (size + sizeof(void*) - 1) / sizeof(void*);
+public:
+    // Constructor: Initialize memory manager with a total memory size
+    explicit MemoryManager(std::size_t totalSize)
+        : memory_pool(std::make_unique<char[]>(totalSize)), pool_size(totalSize) {
+        // Ensure the pool size is aligned
+        if (pool_size < align_up(1, alignment)) {
+            throw std::invalid_argument("Pool size too small for alignment.");
+        }
+        blocks.emplace_back(0, pool_size, true); // Start with one large free block
+        logMessage(LogLevel::INFO, "MemoryManager initialized with pool size: " + std::to_string(pool_size));
+    }
 
-    // Allocate memory blocks
-    for (size_t i = 0; i < num_blocks; i++) {
-        // Check if the current block is available
-        if (*(volatile uint8_t*)&memory_pool[i]) {
-            // Mark the block as allocated
-            *(volatile uint8_t*)&memory_pool[i] = 0;
-            // Return the allocated memory block
-            return &memory_pool[i];
+    // Destructor: Detect memory leaks
+    ~MemoryManager() {
+        std::shared_lock<std::shared_mutex> lock(manager_mutex);
+        if (!allocated_blocks.empty()) {
+            logMessage(LogLevel::ERROR, "Memory leaks detected:");
+            for (const auto& offset : allocated_blocks) {
+                logMessage(LogLevel::ERROR, " - Leaked block at offset " + std::to_string(offset));
+            }
+        } else {
+            logMessage(LogLevel::INFO, "No memory leaks detected.");
         }
     }
 
-    // If no blocks are available, allocate a new block
-    void* new_block = malloc(size + sizeof(void*));
-    if (!new_block) {
-        return NULL;
-    }
+    // Disable copy semantics
+    MemoryManager(const MemoryManager&) = delete;
+    MemoryManager& operator=(const MemoryManager&) = delete;
 
-    // Mark the new block as allocated
-    *(volatile uint8_t*)new_block = 0;
+    // Enable move semantics
+    MemoryManager(MemoryManager&&) = default;
+    MemoryManager& operator=(MemoryManager&&) = default;
 
-    // Chain the new block to the memory pool
-    ((struct memory_block*)new_block)->prev = memory_pool;
-    memory_pool = new_block;
-
-    return new_block;
-}
-
-// Frees memory previously allocated with memory_alloc()
-void memory_free(void* addr) {
-    // Check if the address is valid
-    if (!addr || !(*(volatile uint8_t*)addr)) {
-        return;
-    }
-
-    // Get the previous block
-    struct memory_block* prev = (struct memory_block*)((uintptr_t)addr - sizeof(void*));
-
-    // Unlink the block from the memory pool
-    prev->next = NULL;
-
-    // Free the block
-    free(addr);
-}
-
-// Maps a virtual address to a physical address
-void* memory_map(void* virt_addr, size_t size) {
-    // Check if the virtual address is valid
-    if (!virt_addr || !size) {
-        return NULL;
-    }
-
-    // Calculate the physical address
-    uint32_t phys_addr = virt_to_phys(virt_addr);
-#define MAP_SIZE 0x100000
-#define MAX_NUM_BLOCKS 1024
-
-// Structure to represent a memory block
-typedef struct {
-    void* addr;
-    size_t size;
-    struct memory_block* next;
-} memory_block_t;
-
-// Global variables
-memory_block_t* memory_pool = NULL;
-memory_block_t* kernel_vas = NULL;
-memory_block_t* user_vas = NULL;
-
-// Function to allocate memory from the memory pool
-void* memory_alloc(size_t size) {
-    void* addr = NULL;
-
-    // Check if the requested size is valid
-    if (size == 0) {
-        return NULL;
-    }
-
-    // Search for a block that can accommodate the request
-    memory_block_t* curr = memory_pool;
-    while (curr != NULL && curr->size < size) {
-        curr = curr->next;
-    }
-
-    // If a suitable block is found, split it into two smaller blocks
-    if (curr != NULL) {
-        // Calculate the size of the new block
-        size_t new_size = curr->size - size;
-
-        // Create a new block and set its attributes
-        memory_block_t* new_block = (memory_block_t*)malloc(sizeof(struct memory_block));
-        new_block->addr = curr->addr + size;
-        new_block->size = new_size;
-        new_block->next = curr->next;
-
-        // Update the original block's size and next pointer
-        curr->size = size;
-        curr->next = new_block;
-
-        // Return the newly created block
-        return new_block->addr;
-    } else {
-        // No suitable block was found, so allocate a new one
-        void* new_addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (new_addr == MAP_FAILED) {
-            perror("mmap failed");
-            exit(EXIT_FAILURE);
+    // Allocate memory of given size. Returns pointer to allocated memory or nullptr if failed.
+    T* allocate(std::size_t size) {
+        std::unique_lock<std::shared_mutex> lock(manager_mutex);
+        if (size == 0) {
+            logMessage(LogLevel::WARNING, "Attempted to allocate 0 size.");
+            return nullptr; // Invalid size
         }
 
-        // Set up the new block's attributes
-        memory_block_t* new_block = (memory_block_t*)malloc(sizeof(struct memory_block));
-        new_block->addr = new_addr;
-        new_block->size = size;
-        new_block->next = memory_pool;
+        // Calculate the size in bytes, considering the size of T
+        std::size_t bytes_needed = align_up(size * sizeof(T), alignment);
+        logMessage(LogLevel::INFO, "Allocating " + std::to_string(size) + " objects (" + std::to_string(bytes_needed) + " bytes).");
 
-        // Add the new block to the memory pool
-        memory_pool = new_block;
+        // Best-Fit: Find the smallest free block that fits the requested size
+        auto it = std::min_element(blocks.begin(), blocks.end(),
+            [bytes_needed](const Block& a, const Block& b) {
+                if (!a.is_free && !b.is_free) return false;
+                if (a.is_free && b.is_free) {
+                    return a.size < b.size;
+                }
+                return a.is_free && a.size < b.size;
+            });
 
-        return new_block->addr;
-    }
-}
+        if (it == blocks.end() || !it->is_free || it->size < bytes_needed) {
+            // No suitable block found; attempt to expand the pool
+            if (!expand_pool(bytes_needed)) {
+                logMessage(LogLevel::ERROR, "Allocation failed: Not enough memory.");
+                return nullptr;
+            }
+            // Recalculate the iterator after expansion
+            it = std::min_element(blocks.begin(), blocks.end(),
+                [bytes_needed](const Block& a, const Block& b) {
+                    if (!a.is_free && !b.is_free) return false;
+                    if (a.is_free && b.is_free) {
+                        return a.size < b.size;
+                    }
+                    return a.is_free && a.size < b.size;
+                });
+            if (it == blocks.end() || !it->is_free || it->size < bytes_needed) {
+                logMessage(LogLevel::ERROR, "Allocation failed after pool expansion.");
+                return nullptr;
+            }
+        }
 
-// Function to free memory previously allocated with memory_alloc()
-void memory_free(void* addr) {
-    // Check if the address is valid
-    if (!addr) {
-        return;
-    }
+        // Allocate memory from the selected block
+        std::size_t allocated_offset = it->offset;
+        T* ptr = reinterpret_cast<T*>(memory_pool.get() + allocated_offset);
 
-    // Find the block that contains the given address
-    memory_block_t* curr = memory_pool;
-    while (curr != NULL && curr->addr != addr) {
-        curr = curr->next;
-    }
+        if (it->size > bytes_needed) {
+            // Split the block into allocated and remaining free parts
+            Block allocated_block(allocated_offset, bytes_needed, false);
+            Block remaining_block(allocated_offset + bytes_needed, it->size - bytes_needed, true);
+            // Replace the current block with allocated and remaining blocks
+            it = blocks.erase(it);
+            it = blocks.emplace(it, allocated_block);
+            blocks.emplace(it + 1, remaining_block);
+        } else {
+            // Exact fit; mark block as used
+            it->is_free = false;
+        }
 
-    // If the block is not found, return error
-    if (curr == NULL) {
-        fprintf(stderr, "Memory block not found\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // Unlink the block from the memory pool
-    curr->next = NULL;
-
-    // Free the block
-    munmap(curr->addr, curr->size);
-    free(curr);
-}
-
-// Function to map a virtual address to a physical address
-void* memory_map(void* virt_addr, size_t size) {
-    // Check if the virtual address is valid
-    if (!virt_addr || !size) {
-        return NULL;
-    }
-
-    // Calculate the physical address
-    uint32_t phys_addr = virt_to_phys(virt_addr);
-
-    // Check if the physical address is valid
-if (phys_addr >= KERNEL_VIRTUAL_BASE && phys_addr <= KERNEL_VIRTUAL_END) {
-    // Map the physical address to a virtual address
-    void* virt_addr = (void*)((uintptr_t)phys_addr - KERNEL_VIRTUAL_BASE + USER_VIRTUAL_BASE);
-
-    // Check if the virtual address is already mapped
-    if (munmap(virt_addr, size) == -1) {
-        perror("munmap failed");
-        exit(EXIT_FAILURE);
+        allocated_blocks.insert(allocated_offset);
+        logMessage(LogLevel::INFO, "Allocated at offset: " + std::to_string(allocated_offset));
+        return ptr;
     }
 
-    // Remap the virtual address to the physical address
-    int ret = mremap(virt_addr, size, 0, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (ret == -1) {
-        perror("mremap failed");
-        exit(EXIT_FAILURE);
+    // Deallocate memory at given address. Returns true if successful, false otherwise.
+    bool deallocate(T* address) {
+        if (address == nullptr) {
+            logMessage(LogLevel::WARNING, "Attempted to deallocate a null pointer.");
+            return false; // Null pointer cannot be deallocated
+        }
+
+        std::unique_lock<std::shared_mutex> lock(manager_mutex);
+        if (!is_address_valid(address)) {
+            logMessage(LogLevel::ERROR, "Deallocation failed: Invalid address.");
+            return false;
+        }
+
+        std::size_t offset = reinterpret_cast<char*>(address) - memory_pool.get();
+        auto it = std::find_if(blocks.begin(), blocks.end(),
+            [offset](const Block& b) { return b.offset == offset; });
+
+        if (it == blocks.end() || it->is_free) {
+            logMessage(LogLevel::ERROR, "Deallocation failed: Block not found or already free.");
+            return false;
+        }
+
+        it->is_free = true;
+        allocated_blocks.erase(it->offset);
+        logMessage(LogLevel::INFO, "Deallocated block at offset: " + std::to_string(it->offset));
+
+        merge_adjacent_free_blocks(it);
+        return true;
     }
 
-    return virt_addr;
-} else {
-    // Invalid physical address
-    return NULL;
-}
+    // Reallocate memory to a new size. Returns new address or nullptr on failure.
+    T* reallocate(T* address, std::size_t newSize) {
+        if (newSize == 0) {
+            deallocate(address);
+            return nullptr;
+        }
+
+        if (address == nullptr) {
+            return allocate(newSize);
+        }
+
+        std::unique_lock<std::shared_mutex> lock(manager_mutex);
+        if (!is_address_valid(address)) {
+            logMessage(LogLevel::ERROR, "Reallocation failed: Invalid address.");
+            return nullptr;
+        }
+
+        std::size_t current_offset = reinterpret_cast<char*>(address) - memory_pool.get();
+        auto it = std::find_if(blocks.begin(), blocks.end(),
+            [current_offset](const Block& b) { return b.offset == current_offset; });
+
+        if (it == blocks.end() || it->is_free) {
+            logMessage(LogLevel::ERROR, "Reallocation failed: Block not found or is free.");
+            return nullptr;
+        }
+
+        std::size_t current_size = it->size;
+        std::size_t new_bytes_needed = align_up(newSize * sizeof(T), alignment);
+
+        if (new_bytes_needed == current_size) {
+            logMessage(LogLevel::INFO, "Reallocation not required: Size unchanged.");
+            return address;
+        }
+
+        if (new_bytes_needed < current_size) {
+            // Shrink the block
+            std::size_t remaining = current_size - new_bytes_needed;
+            it->size = new_bytes_needed;
+            Block new_free(it->offset + new_bytes_needed, remaining, true);
+            blocks.emplace(it + 1, new_free);
+            merge_adjacent_free_blocks(it + 1);
+            logMessage(LogLevel::INFO, "Shrunk block at offset " + std::to_string(it->offset) +
+                                       " from " + std::to_string(current_size) +
+                                       " to " + std::to_string(new_bytes_needed));
+            return address;
+        }
+
+        // Attempt to expand the block in place by checking the next block
+        auto next_it = std::next(it);
+        if (next_it != blocks.end() && next_it->is_free &&
+            (it->size + next_it->size) >= new_bytes_needed) {
+
+            std::size_t additional = new_bytes_needed - it->size;
+            if (next_it->size > additional) {
+                // Split the next block
+                Block expanded_block(next_it->offset, additional, false);
+                Block remaining_free(next_it->offset + additional, next_it->size - additional, true);
+                blocks.erase(next_it);
+                blocks.emplace(it + 1, expanded_block);
+                blocks.emplace(it + 2, remaining_free);
+            } else {
+                // Consume the entire next block
+                it->size += next_it->size;
+                blocks.erase(next_it);
+            }
+
+            logMessage(LogLevel::INFO, "Expanded block at offset " + std::to_string(it->offset) +
+                                       " to size " + std::to_string(it->size));
+            return address;
+        }
+
+        // Allocate a new block and copy data
+        T* new_address = allocate(newSize);
+        if (new_address) {
+            std::memcpy(new_address, address, current_size);
+            deallocate(address);
+            logMessage(LogLevel::INFO, "Reallocated block from offset " + std::to_string(it->offset) +
+                                       " to new offset " + std::to_string(reinterpret_cast<char*>(new_address) - memory_pool.get()));
+        } else {
+            logMessage(LogLevel::ERROR, "Reallocation failed: Unable to allocate new block.");
+        }
+        return new_address;
+    }
+
+    // Copy data from source to destination. Returns true on success.
+    bool copy(T* sourceAddress, T* destinationAddress, std::size_t count) {
+        if (sourceAddress == nullptr || destinationAddress == nullptr || count == 0) {
+            logMessage(LogLevel::WARNING, "Invalid parameters for copy operation.");
+            return false;
+        }
+
+        std::shared_lock<std::shared_mutex> lock(manager_mutex);
+        if (!is_address_valid(sourceAddress) || !is_address_valid(destinationAddress)) {
+            logMessage(LogLevel::ERROR, "Copy failed: Invalid source or destination address.");
+            return false;
+        }
+
+        std::size_t src_size = get_block_size(sourceAddress);
+        std::size_t dest_size = get_block_size(destinationAddress);
+        std::size_t bytes_to_copy = std::min({count * sizeof(T), src_size, dest_size});
+
+        std::memcpy(destinationAddress, sourceAddress, bytes_to_copy);
+        logMessage(LogLevel::INFO, "Copied " + std::to_string(bytes_to_copy) + " bytes from source to destination.");
+        return true;
+    }
+
+    // Get a span representing the memory block containing the given address.
+    std::optional<std::span<T>> getMemoryBlock(T* address) const {
+        if (address < reinterpret_cast<T*>(memory_pool.get()) ||
+            address >= reinterpret_cast<T*>(memory_pool.get() + pool_size)) {
+            return std::nullopt;
+        }
+
+        std::shared_lock<std::shared_mutex> lock(manager_mutex);
+        std::size_t offset = reinterpret_cast<char*>(address) - memory_pool.get();
+        for (const auto& block : blocks) {
+            if (offset >= block.offset && offset < block.offset + block.size) {
+                if (!block.is_free) {
+                    // Calculate the number of T elements that fit in the block
+                    std::size_t count = block.size / sizeof(T);
+                    return std::span<T>(reinterpret_cast<T*>(memory_pool.get() + block.offset), count);
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Print the current state of memory
+    void printMemoryState() const {
+        std::shared_lock<std::shared_mutex> lock(manager_mutex);
+        std::size_t free_memory = std::accumulate(blocks.begin(), blocks.end(), 0ULL,
+            [](std::size_t sum, const Block& block) { return sum + (block.is_free ? block.size : 0); });
+        std::size_t used_memory = pool_size - free_memory;
+        std::cout << "----------------------------------------" << std::endl;
+        std::cout << "Memory State:" << std::endl;
+        std::cout << "Total Memory: " << pool_size << " bytes" << std::endl;
+        std::cout << "Used Memory: " << used_memory << " bytes" << std::endl;
+        std::cout << "Free Memory: " << free_memory << " bytes" << std::endl;
+        std::cout << "Blocks:" << std::endl;
+        std::cout << std::left << std::setw(10) << "Offset"
+                  << std::setw(10) << "Size"
+                  << std::setw(10) << "Status" << std::endl;
+        for (const auto& block : blocks) {
+            std::cout << std::left << std::setw(10) << block.offset
+                      << std::setw(10) << block.size
+                      << std::setw(10) << (block.is_free ? "Free" : "Used") << std::endl;
+        }
+        std::cout << "----------------------------------------" << std::endl;
+    }
+
+private:
+    // Check if an address is valid and allocated
+    bool is_address_valid(T* address) const {
+        if (address < reinterpret_cast<T*>(memory_pool.get()) ||
+            address >= reinterpret_cast<T*>(memory_pool.get() + pool_size)) {
+            return false;
+        }
+        std::size_t offset = reinterpret_cast<char*>(address) - memory_pool.get();
+        return allocated_blocks.find(offset) != allocated_blocks.end();
+    }
+
+    // Get the size of the block containing the given address
+    std::size_t get_block_size(T* address) const {
+        std::size_t offset = reinterpret_cast<char*>(address) - memory_pool.get();
+        for (const auto& block : blocks) {
+            if (block.offset <= offset && offset < block.offset + block.size) {
+                return block.size;
+            }
+        }
+        return 0;
+    }
+
+    // Merge adjacent free blocks around the given iterator
+    void merge_adjacent_free_blocks(typename std::vector<Block>::iterator it) {
+        if (it == blocks.end()) return;
+
+        // Merge with next blocks
+        while (std::next(it) != blocks.end() && std::next(it)->is_free) {
+            it->size += std::next(it)->size;
+            blocks.erase(std::next(it));
+            logMessage(LogLevel::INFO, "Merged with next free block. New size: " + std::to_string(it->size));
+        }
+
+        // Merge with previous block
+        if (it != blocks.begin()) {
+            auto prev = std::prev(it);
+            if (prev->is_free) {
+                prev->size += it->size;
+                blocks.erase(it);
+                logMessage(LogLevel::INFO, "Merged with previous free block. New size: " + std::to_string(prev->size));
+            }
+        }
+    }
+
+    // Attempt to expand the memory pool to accommodate additional bytes
+    bool expand_pool(std::size_t additional_bytes) {
+        std::size_t new_size = pool_size;
+        std::size_t aligned_additional = align_up(additional_bytes, alignment);
+        while (new_size < pool_size + aligned_additional) {
+            new_size *= 2; // Double the pool size for exponential growth
+            if (new_size <= pool_size) { // Overflow check
+                logMessage(LogLevel::ERROR, "Pool expansion failed: Size overflow.");
+                return false;
+            }
+        }
+
+        std::unique_ptr<char[]> new_pool = std::make_unique<char[]>(new_size);
+        std::memcpy(new_pool.get(), memory_pool.get(), pool_size);
+        memory_pool = std::move(new_pool);
+        blocks.emplace_back(pool_size, new_size - pool_size, true);
+        logMessage(LogLevel::INFO, "Expanded memory pool to " + std::to_string(new_size) + " bytes.");
+        pool_size = new_size;
+        return true;
+    }
+};

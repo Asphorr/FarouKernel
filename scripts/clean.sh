@@ -1,23 +1,77 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Remove object files
-rm -f *.o
+# Define functions for removing various types of files
+remove_object_files() {
+  local objfiles
+  objfiles=$(ls | grep "\.o$")
+  if [[ -n "$objfiles" ]]; then
+    echo "Removing object files:"
+    printf "%s\n" "${objfiles[@]}"
+    rm --force "${objfiles[@]}"
+  fi
+}
 
-# Remove executable
-rm -f ${funicod}
+remove_executable() {
+  local funicod
+  funicod="$1"
+  if [[ -x "$funicod" ]]; then
+    echo "Removing executable '$funicod'"
+    rm --force "$funicod"
+  fi
+}
 
-# Remove library files
-rm -f lib${funicod}.a
+remove_library_files() {
+  local libname
+  libname="$1"
+  if [[ -e "$libname" ]]; then
+    echo "Removing library file '$libname'"
+    rm --force "$libname"
+  fi
+}
 
-# Remove test executable
-rm -f test_${funicod}
+remove_test_exe() {
+  local testexe
+  testexe="$1"
+  if [[ -x "$testexe" ]]; then
+    echo "Removing test executable '$testexe'"
+    rm --force "$testexe"
+  fi
+}
 
-# Remove benchmark executable
-rm -f bench_${funicod}
+remove_bench_exe() {
+  local benchexe
+  benchexe="$1"
+  if [[ -x "$benchexe" ]]; then
+    echo "Removing benchmark executable '$benchexe'"
+    rm --force "$benchexe"
+  fi
+}
 
-# Remove any remaining files
-rm -rf */*.dSYM
-rm -rf */*.DS_Store
+remove_dsym_and_store() {
+  find . \( -name "*.dSYM" -or -name "*.DS_Store" \) -delete
+}
 
-# Remove empty directories
-rmdir --ignore-fail-on-non-empty */*/
+remove_empty_dirs() {
+  find . -type d -empty -exec rmdir {} \;
+}
+
+# Main function
+main() {
+  # Set up some variables
+  funicod="funicod"
+  libname="lib$funicod.a"
+  testexe="test_$funicod"
+  benchexe="bench_$funicod"
+
+  # Call functions to remove various types of files
+  remove_object_files
+  remove_executable "$funicod"
+  remove_library_files "$libname"
+  remove_test_exe "$testexe"
+  remove_bench_exe "$benchexe"
+  remove_dsym_and_store
+  remove_empty_dirs
+}
+
+# Call main function
+main
