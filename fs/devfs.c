@@ -1,32 +1,9 @@
-// devfs.h
-#ifndef DEVFS_H
-#define DEVFS_H
-
-#include <linux/fs.h>
-#include <linux/module.h>
-#include <linux/slab.h>
-#include <linux/uaccess.h>
-
-struct devfs_params {
-    // Add any necessary parameters here
-};
-
-// Function declarations
-static int devfs_parse_param(const char *options, struct devfs_params *params);
-static struct dentry *devfs_mount(struct file_system_type *fs_type, int flags,
-                                  const char *dev_name, void *data);
-static ssize_t devfs_read(struct file *filp, char __user *buf, size_t count, loff_t *ppos);
-static ssize_t devfs_write(struct file *filp, const char __user *buf, size_t count, loff_t *ppos);
-static int devfs_open(struct inode *inode, struct file *filp);
-static int devfs_release(struct inode *inode, struct file *filp);
-static long devfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
-static long devfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
-static int devfs_mmap(struct file *filp, struct vm_area_struct *vma);
-
-#endif // DEVFS_H
-
-// devfs.c
 #include "devfs.h"
+
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/pagemap.h> /* For basic filesystem functions */
+#include <linux/time.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Mikhail");
@@ -34,7 +11,20 @@ MODULE_DESCRIPTION("An improved sample device file system");
 
 static struct devfs_params devfs_params;
 
-static struct file_operations fops = {
+/* Function to fill the superblock */
+int devfs_fill_super(struct super_block *sb, void *data, int silent);
+
+/* Declare the file system type */
+static struct file_system_type devfs_type = {
+    .owner = THIS_MODULE,
+    .name = "devfs",
+    .mount = devfs_mount,
+    .kill_sb = kill_litter_super,
+    .fs_flags = FS_USERNS_MOUNT,
+};
+
+/* File operations */
+const struct file_operations devfs_file_operations = {
     .owner = THIS_MODULE,
     .llseek = generic_file_llseek,
     .read = devfs_read,
@@ -46,32 +36,15 @@ static struct file_operations fops = {
     .mmap = devfs_mmap,
 };
 
-static struct address_space_operations addr_ops = {
-    .readpage = devfs_readpage,
-    .writepage = devfs_writepage,
-    .sync_page = devfs_sync_page,
+/* Inode operations */
+const struct inode_operations devfs_inode_operations = {
+    /* Implement required inode operations */
 };
 
-static struct inode_operations inode_ops = {
-    .create = devfs_create,
-    .lookup = devfs_lookup,
-    .link = devfs_link,
-    .unlink = devfs_unlink,
-    .rmdir = devfs_rmdir,
-    .rename = devfs_rename,
-    .setattr = devfs_setattr,
-    .getattr = devfs_getattr,
-};
-
-static struct super_block sb = {
-    .s_op = &devfs_sops,
-    .s_flags = SB_NODIRATIME | SB_RDONLY,
-};
-
-static struct file_system_type devfs_type = {
-    .name = "devfs",
-    .mount = devfs_mount,
-    .kill_sb = kill_litter_super,
+/* Super block operations */
+const struct super_operations devfs_super_operations = {
+    .statfs     = simple_statfs,
+    .drop_inode = generic_delete_inode,
 };
 
 /**
@@ -85,8 +58,8 @@ static struct file_system_type devfs_type = {
  *
  * Return: Pointer to the root dentry on success, ERR_PTR on failure
  */
-static struct dentry *devfs_mount(struct file_system_type *fs_type, int flags,
-                                  const char *dev_name, void *data)
+struct dentry *devfs_mount(struct file_system_type *fs_type, int flags,
+                           const char *dev_name, void *data)
 {
     return mount_nodev(fs_type, flags, data, devfs_fill_super);
 }
@@ -100,29 +73,10 @@ static struct dentry *devfs_mount(struct file_system_type *fs_type, int flags,
  *
  * Return: 0 on success, negative error code on failure
  */
-static int devfs_parse_param(const char *options, struct devfs_params *params)
+int devfs_parse_param(const char *options, struct devfs_params *params)
 {
-    char *p, *token;
-    substring_t args[MAX_OPT_ARGS];
-    int ret = 0;
-
-    if (!options)
-        return 0;
-
-    while ((p = strsep(&options, ",")) != NULL) {
-        if (!*p)
-            continue;
-
-        token = match_token(p, devfs_tokens, args);
-        switch (token) {
-        // Add cases for parsing different options
-        default:
-            pr_err("devfs: unrecognized mount option \"%s\"\n", p);
-            return -EINVAL;
-        }
-    }
-
-    return ret;
+    /* For now, we can just return 0 as there are no parameters */
+    return 0;
 }
 
 /**
@@ -136,9 +90,9 @@ static int devfs_parse_param(const char *options, struct devfs_params *params)
  *
  * Return: Number of bytes read on success, negative error code on failure
  */
-static ssize_t devfs_read(struct file *filp, char __user *buf, size_t count, loff_t *ppos)
+ssize_t devfs_read(struct file *filp, char __user *buf, size_t count, loff_t *ppos)
 {
-    // TODO: Implement read operation
+    /* Implement read operation */
     return -ENOSYS;
 }
 
@@ -153,9 +107,9 @@ static ssize_t devfs_read(struct file *filp, char __user *buf, size_t count, lof
  *
  * Return: Number of bytes written on success, negative error code on failure
  */
-static ssize_t devfs_write(struct file *filp, const char __user *buf, size_t count, loff_t *ppos)
+ssize_t devfs_write(struct file *filp, const char __user *buf, size_t count, loff_t *ppos)
 {
-    // TODO: Implement write operation
+    /* Implement write operation */
     return -ENOSYS;
 }
 
@@ -168,9 +122,9 @@ static ssize_t devfs_write(struct file *filp, const char __user *buf, size_t cou
  *
  * Return: 0 on success, negative error code on failure
  */
-static int devfs_open(struct inode *inode, struct file *filp)
+int devfs_open(struct inode *inode, struct file *filp)
 {
-    // TODO: Implement open operation
+    /* Implement open operation */
     return 0;
 }
 
@@ -183,9 +137,9 @@ static int devfs_open(struct inode *inode, struct file *filp)
  *
  * Return: 0 on success, negative error code on failure
  */
-static int devfs_release(struct inode *inode, struct file *filp)
+int devfs_release(struct inode *inode, struct file *filp)
 {
-    // TODO: Implement release operation
+    /* Implement release operation */
     return 0;
 }
 
@@ -199,10 +153,10 @@ static int devfs_release(struct inode *inode, struct file *filp)
  *
  * Return: 0 on success, negative error code on failure
  */
-static long devfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+long devfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-    // TODO: Implement ioctl operation
-    return -ENOSYS;
+    /* Implement ioctl operation */
+    return -ENOTTY;
 }
 
 /**
@@ -215,10 +169,10 @@ static long devfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
  *
  * Return: 0 on success, negative error code on failure
  */
-static long devfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+long devfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-    // TODO: Implement compat_ioctl operation
-    return -ENOSYS;
+    /* Implement compat_ioctl operation */
+    return -ENOTTY;
 }
 
 /**
@@ -230,9 +184,9 @@ static long devfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned lon
  *
  * Return: 0 on success, negative error code on failure
  */
-static int devfs_mmap(struct file *filp, struct vm_area_struct *vma)
+int devfs_mmap(struct file *filp, struct vm_area_struct *vma)
 {
-    // TODO: Implement mmap operation
+    /* Implement mmap operation */
     return -ENOSYS;
 }
 
@@ -246,69 +200,51 @@ static int devfs_mmap(struct file *filp, struct vm_area_struct *vma)
  *
  * Return: 0 on success, negative error code on failure
  */
-static int devfs_fill_super(struct super_block *sb, void *data, int silent)
+int devfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-    struct inode *root_inode;
-    struct dentry *root_dentry;
+    struct inode *inode;
+    struct dentry *root;
 
+    /* Set superblock parameters */
     sb->s_magic = DEVFS_SUPER_MAGIC;
-    sb->s_op = &devfs_sops;
+    sb->s_op = &devfs_super_operations;
+    sb->s_time_gran = 1;
 
-    root_inode = new_inode(sb);
-    if (!root_inode)
+    /* Allocate inode for root directory */
+    inode = new_inode(sb);
+    if (!inode)
         return -ENOMEM;
 
-    root_inode->i_ino = 1;
-    root_inode->i_mode = S_IFDIR | 0755;
-    root_inode->i_atime = root_inode->i_mtime = root_inode->i_ctime = current_time(root_inode);
-    root_inode->i_op = &devfs_dir_inode_operations;
-    root_inode->i_fop = &devfs_dir_operations;
+    inode->i_ino = 1; /* Inode number 1 for root */
+    inode->i_sb = sb;
+    inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
+    inode->i_mode = S_IFDIR | 0755;
+    inode->i_op = &simple_dir_inode_operations;
+    inode->i_fop = &simple_dir_operations;
 
-    root_dentry = d_make_root(root_inode);
-    if (!root_dentry) {
-        iput(root_inode);
+    /* Create root dentry */
+    root = d_make_root(inode);
+    if (!root) {
+        iput(inode);
         return -ENOMEM;
     }
 
-    sb->s_root = root_dentry;
-
+    sb->s_root = root;
     return 0;
 }
 
-static struct super_operations devfs_sops = {
-    .statfs     = simple_statfs,
-    .drop_inode = generic_delete_inode,
-};
-
-static struct inode_operations devfs_dir_inode_operations = {
-    .create  = devfs_create,
-    .lookup  = devfs_lookup,
-    .link    = devfs_link,
-    .unlink  = devfs_unlink,
-    .symlink = devfs_symlink,
-    .mkdir   = devfs_mkdir,
-    .rmdir   = devfs_rmdir,
-    .mknod   = devfs_mknod,
-    .rename  = devfs_rename,
-};
-
-static struct file_operations devfs_dir_operations = {
-    .read    = generic_read_dir,
-    .iterate = devfs_readdir,
-};
-
 /**
- * devfs_init_module - Initialize the devfs module
+ * devfs_init - Initialize the devfs module
  *
  * This function initializes the devfs module and registers the filesystem.
  *
  * Return: 0 on success, negative error code on failure
  */
-static int __init devfs_init_module(void)
+static int __init devfs_init(void)
 {
     int ret;
 
-    ret = devfs_parse_param(saved_mount_opts, &devfs_params);
+    ret = devfs_parse_param(NULL, &devfs_params);
     if (ret) {
         pr_err("devfs: Failed to parse parameters\n");
         return ret;
@@ -320,20 +256,25 @@ static int __init devfs_init_module(void)
         return ret;
     }
 
-    pr_info("devfs: Initialized successfully\n");
+    pr_info("devfs: Module loaded\n");
     return 0;
 }
 
 /**
- * devfs_exit_module - Cleanup and exit the devfs module
+ * devfs_exit - Cleanup and exit the devfs module
  *
  * This function unregisters the filesystem and performs any necessary cleanup.
  */
-static void __exit devfs_exit_module(void)
+static void __exit devfs_exit(void)
 {
-    unregister_filesystem(&devfs_type);
-    pr_info("devfs: Unloaded\n");
+    int ret;
+
+    ret = unregister_filesystem(&devfs_type);
+    if (ret)
+        pr_err("devfs: Failed to unregister filesystem\n");
+
+    pr_info("devfs: Module unloaded\n");
 }
 
-module_init(devfs_init_module);
-module_exit(devfs_exit_module);
+module_init(devfs_init);
+module_exit(devfs_exit);
