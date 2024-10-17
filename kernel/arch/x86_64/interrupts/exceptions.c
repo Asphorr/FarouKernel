@@ -1,5 +1,5 @@
 #include "exceptions.h"
-#include "../drivers/screen.h"  // Assumes you have a function for screen output
+#include "../drivers/screen.h"
 #include <stdint.h>
 
 #define NUM_EXCEPTIONS 32
