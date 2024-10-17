@@ -1,63 +1,149 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <algorithm>
+#include <filesystem>
+#include <functional>
+#include <stdexcept>
+#include <limits>
+#include <sstream>
+#include <vector>
 
-#define MAX_ARGS 64
+#include <tbb/parallel_for_each.h>
+#include <tbb/concurrent_unordered_map.h>
+#include <spdlog/spdlog.h>
+#include <cxxopts.hpp>
+#include <toml.hpp>
+#include <doctest/doctest.h>
 
-int main(void) {
-    // Parse command line arguments
-    char **args = malloc(sizeof(char *) * MAX_ARGS);
-    int argc = parse_command_line(args, MAX_ARGS);
+using DataMap = tbb::concurrent_unordered_map<std::string, int>;
 
-    // Initialize the system call table
-    initialize_syscall_table();
+struct Config {
+    std::string inputFile;
+    std::string outputFile;
+    int reserveSize;
+    bool useParallelProcessing;
+};
 
-    // Set up the program environment
-    setup_program_environment();
-
-    // Start the program
-    start_program(argc, args);
-
-    // Wait for the program to finish
-    wait_for_program_to_finish();
-
-    // Clean up and exit
-    cleanup_and_exit();
-
-    return 0;
+void initializeLogger() {
+    spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %v");
+    spdlog::set_level(spdlog::level::debug);
 }
 
-int parse_command_line(char **args, int max_args) {
-    // Parse the command line arguments
-    int argc = 0;
-    char *argv[max_args];
+Config loadConfig(const std::string& configFile) {
+    auto data = toml::parse(configFile);
+    Config config;
+    config.inputFile = toml::find<std::string>(data, "input_file");
+    config.outputFile = toml::find<std::string>(data, "output_file");
+    config.reserveSize = toml::find<int>(data, "reserve_size");
+    config.useParallelProcessing = toml::find<bool>(data, "use_parallel_processing");
+    return config;
+}
 
-    while ((argc < max_args) && (*++argv = strtok(NULL, " \t")) != NULL) {
-        args[argc++] = argv[0];
+DataMap readDataFromFile(const std::filesystem::path& filepath, int reserveSize) {
+    std::ifstream input(filepath);
+    if (!input) {
+        spdlog::error("Could not open file: {}", filepath.string());
+        throw std::runtime_error("File open error");
     }
 
-    return argc;
+    std::vector<std::pair<std::string, int>> rawData;
+    rawData.reserve(reserveSize);
+
+    std::string line;
+    while (std::getline(input, line)) {
+        std::istringstream iss(line);
+        std::string key;
+        int value;
+        if (!(iss >> key >> value)) {
+            spdlog::error("Invalid data format in file: {}", filepath.string());
+            throw std::runtime_error("Data format error");
+        }
+        if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max()) {
+            spdlog::error("Value out of range in file: {}", filepath.string());
+            throw std::runtime_error("Value range error");
+        }
+        rawData.emplace_back(std::move(key), value);
+    }
+
+    DataMap data;
+    data.reserve(rawData.size());
+
+    tbb::parallel_for_each(rawData.begin(), rawData.end(),
+        [&data](const auto& pair) {
+            data.insert(pair);
+        });
+
+    return data;
 }
 
-void setup_program_environment() {
-    // Set up the program environment
-    // ...
+void processDataParallel(DataMap& data, const std::function<void(std::string&, int&)>& processFunc) {
+    tbb::parallel_for_each(data.begin(), data.end(),
+        [&processFunc](auto& pair) {
+            processFunc(const_cast<std::string&>(pair.first), pair.second);
+        });
 }
 
-void start_program(int argc, char **args) {
-    // Start the program
-    // ...
+void processDataSequential(DataMap& data, const std::function<void(std::string&, int&)>& processFunc) {
+    for (auto& pair : data) {
+        processFunc(const_cast<std::string&>(pair.first), pair.second);
+    }
 }
 
-void wait_for_program_to_finish() {
-    // Wait for the program to finish
-    // ...
+void writeOutputToFile(const std::filesystem::path& filepath, const DataMap& data) {
+    std::ofstream output(filepath);
+    if (!output) {
+        spdlog::error("Could not open file: {}", filepath.string());
+        throw std::runtime_error("File open error");
+    }
+
+    for (const auto& [key, value] : data) {
+        output << key << ": " << value << '\n';
+    }
 }
 
-void cleanup_and_exit() {
-    // Clean up and exit
-    // ...
-}
+int main(int argc, char* argv[]) {
+    try {
+        initializeLogger();
+
+        cxxopts::Options options("DataProcessor", "Process key-value data from files");
+        options.add_options()
+            ("c,config", "Config file path", cxxopts::value<std::string>()->default_value("config.toml"))
+            ("h,help", "Print usage");
+
+        auto result = options.parse(argc, argv);
+
+        if (result.count("help")) {
+            std::cout << options.help() << std::endl;
+            return 0;
+        }
+
+        std::string configFile = result["config"].as<std::string>();
+        Config config = loadConfig(configFile);
+
+        spdlog::info("Starting data processing");
+        auto data = readDataFromFile(config.inputFile, config.reserveSize);
+        
+        auto processFunc = [](std::string& key, int& value) {
+            if (value > 10) {
+                value *= 2;
+                key += "_doubled";
+            } else {
+                value /= 2;
+                key += "_halved";
+            }
+        };
+
+        if (config.useParallelProcessing) {
+            processDataParallel(data, processFunc);
+        } else {
+            processDataSequential(data, processFunc);
+        }
+
+        writeOutputToFile(config.outputFile, data);
+        spdlog::info("Processing completed successfully");
+    } catch (const std::exception& e) {
+        spdlog::error("Error: {}", e.what());
+        return 1;
+    }
+    return 0;

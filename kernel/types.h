@@ -1,18 +1,23 @@
-#ifndef _TYPES_H
-#define _TYPES_H
+#include <concepts>
+#include <numbers>
+#include <utility>
 
-typedef unsigned long uint64_t;
-typedef signed long sint64_t;
+template <std::integral T>
+using uinteger = std::make_unsigned_t<T>;
 
-typedef unsigned int uint32_t;
-typedef signed int sint32_t;
+template <std::floating_point T>
+using fpnumber = std::conditional_t<sizeof(T) <= sizeof(float), float, double>;
 
-typedef unsigned short uint16_t;
-typedef signed short sint16_t;
+int main() {
+    constexpr int x = 10;
+    constexpr int y = -5;
+    constexpr double z = 0.0;
 
-typedef unsigned char uint8_t;
-typedef signed char sint8_t;
+    static_assert(std::is_same_v<decltype(x), uinteger<int>>);
+    static_assert(std::is_same_v<decltype(y), uinteger<int>>);
+    static_assert(std::is_same_v<decltype(z), fpnumber<double>>);
 
-typedef void (*func)(void);
+    std::cout << "x = " << x << ", y = " << y << ", z = " << z << '\n';
 
-#endif /* _TYPES_H */
+    return 0;
+}
