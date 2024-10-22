@@ -8,6 +8,7 @@
 #include <limits>
 #include <sstream>
 #include <vector>
+#include <memory>
 
 #include <tbb/parallel_for_each.h>
 #include <tbb/concurrent_unordered_map.h>
@@ -16,96 +17,218 @@
 #include <toml.hpp>
 #include <doctest/doctest.h>
 
-using DataMap = tbb::concurrent_unordered_map<std::string, int>;
+namespace {
+    using DataMap = tbb::concurrent_unordered_map<std::string, int>;
+    
+    // Custom exceptions for better error handling
+    class ConfigError : public std::runtime_error {
+        using std::runtime_error::runtime_error;
+    };
+    
+    class FileError : public std::runtime_error {
+        using std::runtime_error::runtime_error;
+    };
+    
+    class DataError : public std::runtime_error {
+        using std::runtime_error::runtime_error;
+    };
+}
 
-struct Config {
+class Config {
+public:
     std::string inputFile;
     std::string outputFile;
     int reserveSize;
     bool useParallelProcessing;
+
+    // Validation method
+    void validate() const {
+        if (inputFile.empty()) {
+            throw ConfigError("Input file path cannot be empty");
+        }
+        if (outputFile.empty()) {
+            throw ConfigError("Output file path cannot be empty");
+        }
+        if (reserveSize <= 0) {
+            throw ConfigError("Reserve size must be positive");
+        }
+    }
 };
 
-void initializeLogger() {
-    spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %v");
-    spdlog::set_level(spdlog::level::debug);
-}
-
-Config loadConfig(const std::string& configFile) {
-    auto data = toml::parse(configFile);
-    Config config;
-    config.inputFile = toml::find<std::string>(data, "input_file");
-    config.outputFile = toml::find<std::string>(data, "output_file");
-    config.reserveSize = toml::find<int>(data, "reserve_size");
-    config.useParallelProcessing = toml::find<bool>(data, "use_parallel_processing");
-    return config;
-}
-
-DataMap readDataFromFile(const std::filesystem::path& filepath, int reserveSize) {
-    std::ifstream input(filepath);
-    if (!input) {
-        spdlog::error("Could not open file: {}", filepath.string());
-        throw std::runtime_error("File open error");
+class DataProcessor {
+public:
+    explicit DataProcessor(const Config& config) : config_(config) {
+        initializeLogger();
     }
 
-    std::vector<std::pair<std::string, int>> rawData;
-    rawData.reserve(reserveSize);
+    void process() {
+        spdlog::info("Starting data processing");
+        auto data = readDataFromFile();
+        processData(data);
+        writeOutputToFile(data);
+        spdlog::info("Processing completed successfully");
+    }
 
-    std::string line;
-    while (std::getline(input, line)) {
+private:
+    const Config& config_;
+    static constexpr size_t MAX_LINE_LENGTH = 1024;
+
+    static void initializeLogger() {
+        static bool initialized = false;
+        if (!initialized) {
+            spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %v");
+            spdlog::set_level(spdlog::level::debug);
+            initialized = true;
+        }
+    }
+
+    DataMap readDataFromFile() const {
+        if (!std::filesystem::exists(config_.inputFile)) {
+            throw FileError("Input file does not exist: " + config_.inputFile);
+        }
+
+        std::ifstream input(config_.inputFile);
+        if (!input) {
+            throw FileError("Could not open input file: " + config_.inputFile);
+        }
+
+        std::vector<std::pair<std::string, int>> rawData;
+        rawData.reserve(static_cast<size_t>(config_.reserveSize));
+
+        std::string line;
+        size_t lineNum = 0;
+        while (std::getline(input, line)) {
+            ++lineNum;
+            if (line.length() > MAX_LINE_LENGTH) {
+                throw DataError("Line " + std::to_string(lineNum) + " exceeds maximum length");
+            }
+            if (line.empty() || line[0] == '#') {
+                continue;  // Skip empty lines and comments
+            }
+            
+            processLine(line, lineNum, rawData);
+        }
+
+        return createDataMap(rawData);
+    }
+
+    static void processLine(const std::string& line, size_t lineNum, 
+                          std::vector<std::pair<std::string, int>>& rawData) {
         std::istringstream iss(line);
         std::string key;
         int value;
+
         if (!(iss >> key >> value)) {
-            spdlog::error("Invalid data format in file: {}", filepath.string());
-            throw std::runtime_error("Data format error");
+            throw DataError("Invalid data format at line " + std::to_string(lineNum));
+        }
+
+        // Additional validation
+        if (key.empty()) {
+            throw DataError("Empty key at line " + std::to_string(lineNum));
         }
         if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max()) {
-            spdlog::error("Value out of range in file: {}", filepath.string());
-            throw std::runtime_error("Value range error");
+            throw DataError("Value out of range at line " + std::to_string(lineNum));
         }
+
         rawData.emplace_back(std::move(key), value);
     }
 
-    DataMap data;
-    data.reserve(rawData.size());
+    static DataMap createDataMap(const std::vector<std::pair<std::string, int>>& rawData) {
+        DataMap data;
+        data.reserve(rawData.size());
 
-    tbb::parallel_for_each(rawData.begin(), rawData.end(),
-        [&data](const auto& pair) {
-            data.insert(pair);
-        });
+        tbb::parallel_for_each(rawData.begin(), rawData.end(),
+            [&data](const auto& pair) {
+                if (!data.insert(pair).second) {
+                    spdlog::warn("Duplicate key found: {}", pair.first);
+                }
+            });
 
-    return data;
-}
-
-void processDataParallel(DataMap& data, const std::function<void(std::string&, int&)>& processFunc) {
-    tbb::parallel_for_each(data.begin(), data.end(),
-        [&processFunc](auto& pair) {
-            processFunc(const_cast<std::string&>(pair.first), pair.second);
-        });
-}
-
-void processDataSequential(DataMap& data, const std::function<void(std::string&, int&)>& processFunc) {
-    for (auto& pair : data) {
-        processFunc(const_cast<std::string&>(pair.first), pair.second);
-    }
-}
-
-void writeOutputToFile(const std::filesystem::path& filepath, const DataMap& data) {
-    std::ofstream output(filepath);
-    if (!output) {
-        spdlog::error("Could not open file: {}", filepath.string());
-        throw std::runtime_error("File open error");
+        return data;
     }
 
-    for (const auto& [key, value] : data) {
-        output << key << ": " << value << '\n';
+    void processData(DataMap& data) const {
+        auto processFunc = [](std::string& key, int& value) {
+            if (value > 10) {
+                value *= 2;
+                key += "_doubled";
+            } else {
+                value /= 2;
+                key += "_halved";
+            }
+        };
+
+        if (config_.useParallelProcessing) {
+            processDataParallel(data, processFunc);
+        } else {
+            processDataSequential(data, processFunc);
+        }
+    }
+
+    static void processDataParallel(DataMap& data, 
+                                  const std::function<void(std::string&, int&)>& processFunc) {
+        tbb::parallel_for_each(data.begin(), data.end(),
+            [&processFunc](auto& pair) {
+                auto key = pair.first;  // Make a copy
+                auto value = pair.second;
+                processFunc(key, value);
+                pair.second = value;  // Update only the value to avoid race conditions
+            });
+    }
+
+    static void processDataSequential(DataMap& data,
+                                    const std::function<void(std::string&, int&)>& processFunc) {
+        for (auto& pair : data) {
+            auto key = pair.first;  // Make a copy
+            auto value = pair.second;
+            processFunc(key, value);
+            pair.second = value;
+        }
+    }
+
+    void writeOutputToFile(const DataMap& data) const {
+        std::filesystem::path outputPath(config_.outputFile);
+        std::filesystem::create_directories(outputPath.parent_path());
+
+        std::ofstream output(outputPath);
+        if (!output) {
+            throw FileError("Could not open output file: " + config_.outputFile);
+        }
+
+        output.exceptions(std::ofstream::badbit | std::ofstream::failbit);
+        
+        try {
+            for (const auto& [key, value] : data) {
+                output << key << ": " << value << '\n';
+            }
+        } catch (const std::ios_base::failure& e) {
+            throw FileError("Failed to write to output file: " + std::string(e.what()));
+        }
+    }
+};
+
+Config loadConfig(const std::string& configFile) {
+    if (!std::filesystem::exists(configFile)) {
+        throw ConfigError("Config file does not exist: " + configFile);
+    }
+
+    try {
+        auto data = toml::parse(configFile);
+        Config config;
+        config.inputFile = toml::find<std::string>(data, "input_file");
+        config.outputFile = toml::find<std::string>(data, "output_file");
+        config.reserveSize = toml::find<int>(data, "reserve_size");
+        config.useParallelProcessing = toml::find<bool>(data, "use_parallel_processing");
+        
+        config.validate();
+        return config;
+    } catch (const toml::exception& e) {
+        throw ConfigError("Failed to parse config file: " + std::string(e.what()));
     }
 }
 
 int main(int argc, char* argv[]) {
     try {
-        initializeLogger();
-
         cxxopts::Options options("DataProcessor", "Process key-value data from files");
         options.add_options()
             ("c,config", "Config file path", cxxopts::value<std::string>()->default_value("config.toml"))
@@ -118,32 +241,24 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
-        std::string configFile = result["config"].as<std::string>();
-        Config config = loadConfig(configFile);
-
-        spdlog::info("Starting data processing");
-        auto data = readDataFromFile(config.inputFile, config.reserveSize);
+        const auto configFile = result["config"].as<std::string>();
+        const auto config = loadConfig(configFile);
         
-        auto processFunc = [](std::string& key, int& value) {
-            if (value > 10) {
-                value *= 2;
-                key += "_doubled";
-            } else {
-                value /= 2;
-                key += "_halved";
-            }
-        };
-
-        if (config.useParallelProcessing) {
-            processDataParallel(data, processFunc);
-        } else {
-            processDataSequential(data, processFunc);
-        }
-
-        writeOutputToFile(config.outputFile, data);
-        spdlog::info("Processing completed successfully");
-    } catch (const std::exception& e) {
-        spdlog::error("Error: {}", e.what());
+        DataProcessor processor(config);
+        processor.process();
+        
+        return 0;
+    } catch (const ConfigError& e) {
+        spdlog::error("Configuration error: {}", e.what());
         return 1;
+    } catch (const FileError& e) {
+        spdlog::error("File error: {}", e.what());
+        return 2;
+    } catch (const DataError& e) {
+        spdlog::error("Data error: {}", e.what());
+        return 3;
+    } catch (const std::exception& e) {
+        spdlog::error("Unexpected error: {}", e.what());
+        return 4;
     }
-    return 0;
+}
