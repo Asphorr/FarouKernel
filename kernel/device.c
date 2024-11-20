@@ -5,117 +5,33 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
-#include <linux/mutex.h>  // Mutex for thread safety
+#include <linux/mutex.h>
+#include <linux/atomic.h>
+#include <linux/device.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Mikhail");
-MODULE_DESCRIPTION("Character Device with Improved Memory Management");
+MODULE_DESCRIPTION("Improved Character Device Driver");
 
-// Constants
 #define BUFFER_SIZE 1024
 
-// Character Device Structure
-typedef struct _my_device {
-    struct cdev cdev;     // Character device structure
-    struct class *class;  // Device class
-    dev_t devno;          // Device number
-    atomic_t open_count;  // Open counter
-    char *buffer;         // Buffer for data storage
-    struct mutex lock;    // Mutex for thread safety
-} my_device_t;
-
-// Function prototypes
-int my_open(struct inode *inode, struct file *file);
-int my_release(struct inode *inode, struct file *file);
-ssize_t my_read(struct file *file, char __user *buf, size_t count, loff_t *offset);
-ssize_t my_write(struct file *file, const char __user *buf, size_t count, loff_t *offset);
-long my_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
-
-// Global variable
-static my_device_t *my_device;
-
-// Initialize character device
-static int __init my_init(void)
-{
-    int retval;
+struct my_device {
+    struct cdev cdev;
+    struct class *class;
     dev_t devno;
+    atomic_t open_count;
+    char *buffer;
+    struct mutex lock;
+};
 
-    // Memory allocation for device
-    my_device = kzalloc(sizeof(my_device_t), GFP_KERNEL);
-    if (!my_device) {
-        pr_err("%s: Failed to allocate device structure\n", __func__);
-        return -ENOMEM;
-    }
+static struct my_device *my_device;
 
-    // Memory allocation for buffer
-    my_device->buffer = kzalloc(BUFFER_SIZE, GFP_KERNEL);
-    if (!my_device->buffer) {
-        pr_err("%s: Failed to allocate buffer\n", __func__);
-        kfree(my_device);
-        return -ENOMEM;
-    }
+static int my_open(struct inode *inode, struct file *file);
+static int my_release(struct inode *inode, struct file *file);
+static ssize_t my_read(struct file *file, char __user *buf, size_t count, loff_t *off);
+static ssize_t my_write(struct file *file, const char __user *buf, size_t count, loff_t *off);
+static long my_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 
-    // Mutex initialization for thread safety
-    mutex_init(&my_device->lock);
-
-    // Dynamic major number allocation
-    retval = alloc_chrdev_region(&devno, 0, 1, "mychar");
-    if (retval < 0) {
-        pr_err("%s: Failed to allocate major number\n", __func__);
-        kfree(my_device->buffer);
-        kfree(my_device);
-        return retval;
-    }
-
-    my_device->devno = devno;
-
-    // Initialize character device
-    cdev_init(&my_device->cdev, &my_fops);
-    my_device->cdev.owner = THIS_MODULE;
-
-    // Add device to the system
-    retval = cdev_add(&my_device->cdev, devno, 1);
-    if (retval < 0) {
-        pr_err("%s: Failed to add device\n", __func__);
-        unregister_chrdev_region(devno, 1);
-        kfree(my_device->buffer);
-        kfree(my_device);
-        return retval;
-    }
-
-    // Create class and device node
-    my_device->class = class_create(THIS_MODULE, "myclass");
-    if (IS_ERR(my_device->class)) {
-        pr_err("%s: Failed to create device class\n", __func__);
-        cdev_del(&my_device->cdev);
-        unregister_chrdev_region(devno, 1);
-        kfree(my_device->buffer);
-        kfree(my_device);
-        return PTR_ERR(my_device->class);
-    }
-
-    device_create(my_device->class, NULL, my_device->devno, NULL, "mychar");
-
-    pr_info("%s: Device initialized successfully\n", __func__);
-    return 0;
-}
-
-// Cleanup function for module removal
-static void __exit my_cleanup(void)
-{
-    // Cleanup resources
-    device_destroy(my_device->class, my_device->devno);
-    class_destroy(my_device->class);
-    cdev_del(&my_device->cdev);
-    unregister_chrdev_region(my_device->devno, 1);
-
-    kfree(my_device->buffer);
-    kfree(my_device);
-
-    pr_info("%s: Device removed successfully\n", __func__);
-}
-
-// File operations structure
 static struct file_operations my_fops = {
     .owner = THIS_MODULE,
     .open = my_open,
@@ -125,84 +41,151 @@ static struct file_operations my_fops = {
     .unlocked_ioctl = my_ioctl,
 };
 
-// Open function
-int my_open(struct inode *inode, struct file *file)
+static int __init my_init(void)
 {
-    // Increment open count atomically
+    int retval;
+    dev_t devno;
+
+    my_device = kzalloc(sizeof(*my_device), GFP_KERNEL);
+    if (!my_device) {
+        pr_err("Failed to allocate device structure\n");
+        return -ENOMEM;
+    }
+
+    atomic_set(&my_device->open_count, 0);
+    my_device->buffer = kzalloc(BUFFER_SIZE, GFP_KERNEL);
+    if (!my_device->buffer) {
+        pr_err("Failed to allocate buffer\n");
+        kfree(my_device);
+        return -ENOMEM;
+    }
+
+    mutex_init(&my_device->lock);
+
+    retval = alloc_chrdev_region(&devno, 0, 1, "mychar");
+    if (retval < 0) {
+        pr_err("Failed to allocate major number\n");
+        kfree(my_device->buffer);
+        kfree(my_device);
+        return retval;
+    }
+    my_device->devno = devno;
+
+    cdev_init(&my_device->cdev, &my_fops);
+    my_device->cdev.owner = THIS_MODULE;
+
+    retval = cdev_add(&my_device->cdev, devno, 1);
+    if (retval < 0) {
+        pr_err("Failed to add device\n");
+        unregister_chrdev_region(devno, 1);
+        kfree(my_device->buffer);
+        kfree(my_device);
+        return retval;
+    }
+
+    my_device->class = class_create(THIS_MODULE, "myclass");
+    if (IS_ERR(my_device->class)) {
+        pr_err("Failed to create device class\n");
+        cdev_del(&my_device->cdev);
+        unregister_chrdev_region(devno, 1);
+        kfree(my_device->buffer);
+        kfree(my_device);
+        return PTR_ERR(my_device->class);
+    }
+
+    device_create(my_device->class, NULL, devno, NULL, "mychar");
+
+    pr_info("Device initialized successfully\n");
+    return 0;
+}
+
+static void __exit my_cleanup(void)
+{
+    device_destroy(my_device->class, my_device->devno);
+    class_destroy(my_device->class);
+    cdev_del(&my_device->cdev);
+    unregister_chrdev_region(my_device->devno, 1);
+    kfree(my_device->buffer);
+    kfree(my_device);
+    pr_info("Device removed successfully\n");
+}
+
+static int my_open(struct inode *inode, struct file *file)
+{
+    mutex_lock(&my_device->lock);
     atomic_inc(&my_device->open_count);
-    pr_debug("%s: Device opened\n", __func__);
+    mutex_unlock(&my_device->lock);
+    pr_debug("Device opened, open count: %d\n", atomic_read(&my_device->open_count));
     return 0;
 }
 
-// Release function
-int my_release(struct inode *inode, struct file *file)
+static int my_release(struct inode *inode, struct file *file)
 {
+    mutex_lock(&my_device->lock);
     atomic_dec(&my_device->open_count);
-    pr_debug("%s: Device closed\n", __func__);
+    mutex_unlock(&my_device->lock);
+    pr_debug("Device closed, open count: %d\n", atomic_read(&my_device->open_count));
     return 0;
 }
 
-// Read function
-ssize_t my_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
+static ssize_t my_read(struct file *filp, char __user *buf, size_t count, loff_t *off)
 {
     ssize_t retval;
-    int count;
+    int read_count;
 
-    // Protect access with mutex
     if (mutex_lock_interruptible(&my_device->lock))
         return -ERESTARTSYS;
 
-    count = min(len, BUFFER_SIZE - (int)*off);
-    if (count <= 0) {
+    read_count = min(count, BUFFER_SIZE - (int)*off);
+    if (read_count <= 0) {
         mutex_unlock(&my_device->lock);
         return 0;
     }
 
-    retval = copy_to_user(buf, my_device->buffer + *off, count);
+    retval = copy_to_user(buf, my_device->buffer + *off, read_count);
     if (retval) {
         mutex_unlock(&my_device->lock);
         return -EFAULT;
     }
 
-    *off += count;
+    *off += read_count;
     mutex_unlock(&my_device->lock);
-    return count;
+    return read_count;
 }
 
-// Write function
-ssize_t my_write(struct file *filp, const char __user *buf, size_t len, loff_t *off)
+static ssize_t my_write(struct file *filp, const char __user *buf, size_t count, loff_t *off)
 {
     ssize_t retval;
-    int count;
+    int write_count;
 
     if (mutex_lock_interruptible(&my_device->lock))
         return -ERESTARTSYS;
 
-    count = min(len, BUFFER_SIZE - (int)*off);
-    if (count <= 0) {
+    write_count = min(count, BUFFER_SIZE - (int)*off);
+    if (write_count <= 0) {
         mutex_unlock(&my_device->lock);
         return 0;
     }
 
-    retval = copy_from_user(my_device->buffer + *off, buf, count);
+    retval = copy_from_user(my_device->buffer + *off, buf, write_count);
     if (retval) {
         mutex_unlock(&my_device->lock);
         return -EFAULT;
     }
 
-    *off += count;
+    *off += write_count;
     mutex_unlock(&my_device->lock);
-    return count;
+    return write_count;
 }
 
-// IOCTL function
-long my_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+static long my_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     switch (cmd) {
-        // Implement IOCTL commands here
+        // Add IOCTL commands here
     default:
         return -ENOTTY;
     }
+    return 0;
 }
 
 module_init(my_init);
