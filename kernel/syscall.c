@@ -1,100 +1,167 @@
-#include <stddef.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
+#include "syscalls.h"
 #include <fcntl.h>
+#include <unistd.h>
 #include <errno.h>
-#include <signal.h>
-#include <time.h>
+#include <stdio.h>
 
-#define MAX_FILENAME_LENGTH 256
-#define MAX_PATH_LENGTH 4096
+// Simple error logging function
+void log_error(const char *message) {
+    fprintf(stderr, "Error: %s (errno: %d)\n", message, errno);
+}
 
-typedef struct _file_t {
-    int fd;
-    char filename[MAX_FILENAME_LENGTH];
-    unsigned long inode;
-    off_t offset;
-    size_t length;
-    time_t mtime;
-    bool deleted;
-} file_t;
+// System call table
+typedef size_t (*syscall_handler_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+static const syscall_handler_t syscall_table[SYS_MAX] = {
+    [SYS_WRITE] = (syscall_handler_t)sys_write,
+    [SYS_READ] = (syscall_handler_t)sys_read,
+    [SYS_OPEN] = (syscall_handler_t)sys_open,
+    [SYS_CLOSE] = (syscall_handler_t)sys_close,
+    [SYS_LSEEK] = (syscall_handler_t)sys_lseek,
+    [SYS_FSTAT] = (syscall_handler_t)sys_fstat,
+    [SYS_EXIT] = (syscall_handler_t)sys_exit,
+};
 
-typedef enum _mode_t {
-    O_RDONLY = 0x0000,   /* Open for reading only */
-    O_WRONLY = 0x0001,   /* Open for writing only */
-    O_RDWR = 0x0002,     /* Open for reading and writing */
-    O_APPEND = 0x0008,   /* If set, append to the end of the file */
-    O_CREAT = 0x0200,    /* If set, create the file if it does not exist */
-    O_EXCL = 0x0800      /* If set, fail if the file already exists */
-} mode_t;
+// System call entry point
+size_t syscall_entry(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4) {
+    if (syscall_num >= SYS_MAX || syscall_table[syscall_num] == NULL) {
+        log_error("Invalid system call number");
+        errno = ENOSYS;
+        return (size_t)-1;
+    }
 
-typedef struct _process_t {
-    pid_t pid;           /* Process ID */
-    uid_t uid;           /* User ID */
-    gid_t gid;           /* Group ID */
-    char name[32];       /* Name of the process */
-    char cwd[MAX_PATH_LENGTH]; /* Current working directory */
-    char **argv;         /* Command line arguments */
-    char **envp;         /* Environment variables */
-    file_t files[32];    /* File descriptors */
-    int num_files;       /* Number of file descriptors */
-    int max_files;       /* Maximum number of file descriptors */
-    sigset_t signal_mask;/* Signal mask for the process */
-    volatile int state; /* State of the process (running, waiting, etc.) */
-    volatile int wakeup; /* Wake-up reason for the process */
-    volatile int error; /* Error code for the process */
-    volatile int retval; /* Return value for the process */
-} process_t;
+    return syscall_table[syscall_num](arg1, arg2, arg3, arg4, 0);
+}
 
-typedef struct _syscall_args_t {
-    union {
-        int arg1;
-        int arg2;
-        int arg3;
-        int arg4;
-        int arg5;
-        int arg6;
-        int arg7;
-        int arg8;
-        int arg9;
-        int arg10;
-    };
-} syscall_args_t;
+// System call handlers implementation
+size_t sys_write(int fd, const void *buf, size_t count) {
+    ssize_t result = write(fd, buf, count);
+    if (result < 0) {
+        log_error("sys_write failed");
+        return (size_t)-1;
+    }
+    return (size_t)result;
+}
 
-typedef struct _syscall_result_t {
-    int result;          /* Result of the system call */
-    int errnum;          /* Errno associated with the result */
-} syscall_result_t;
+size_t sys_read(int fd, void *buf, size_t count) {
+    ssize_t result = read(fd, buf, count);
+    if (result < 0) {
+        log_error("sys_read failed");
+        return (size_t)-1;
+    }
+    return (size_t)result;
+}
 
-typedef struct _syscall_entry_t {
-    int number;          /* System call number */
-    const char *name;    /* Name of the system call */
-    void (*handler)(struct _syscall_args_t *args, struct _syscall_result_t *res); /* Handler function for the system call */
-} syscall_entry_t;
+int sys_open(const char *path, int flags, int mode) {
+    int fd = open(path, flags, mode);
+    if (fd < 0) {
+        log_error("sys_open failed");
+        return -1;
+    }
+    return fd;
+}
 
-extern syscall_entry_t syscall_table[];
+int sys_close(int fd) {
+    int result = close(fd);
+    if (result < 0) {
+        log_error("sys_close failed");
+        return -1;
+    }
+    return 0;
+}
 
-/* Function prototypes */
-void init_syscalls(void);
-void handle_system_call(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_exit(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_read(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_write(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_open(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_close(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_creat(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_link(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_unlink(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_execve(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_chdir(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_fork(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_wait(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_pipe(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_dup(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_dup2(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_getpid(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_brk(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_sleep(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_signal(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_kill(struct _syscall_args_t *args, struct _syscall_result_t *res);
+off_t sys_lseek(int fd, off_t offset, int whence) {
+    off_t result = lseek(fd, offset, whence);
+    if (result == (off_t)-1) {
+        log_error("sys_lseek failed");
+        return (off_t)-1;
+    }
+    return result;
+}
+
+int sys_fstat(int fd, struct stat *st) {
+    int result = fstat(fd, st);
+    if (result < 0) {
+        log_error("sys_fstat failed");
+        return -1;
+    }
+    return 0;
+}
+
+void sys_exit(int status) {
+    _exit(status);
+}
+
+// Main function for testing
+int main(void) {
+    // Test sys_open and sys_write
+    int fd = sys_open("testfile.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd != -1) {
+        const char *message = "Hello, world!";
+        size_t bytes_written = sys_write(fd, message, 13);
+        printf("Bytes written: %zu\n", bytes_written);
+        sys_close(fd);
+    } else {
+        log_error("Failed to open file for writing");
+        return 1;
+    }
+
+    // Test sys_read
+    fd = sys_open("testfile.txt", O_RDONLY, 0);
+    if (fd != -1) {
+        char buffer[20] = {0};
+        size_t bytes_read = sys_read(fd, buffer, sizeof(buffer) - 1);
+        if (bytes_read != (size_t)-1) {
+            printf("Read from file: %s\n", buffer);
+        } else {
+            log_error("Failed to read from file");
+        }
+        sys_close(fd);
+    } else {
+        log_error("Failed to open file for reading");
+        return 1;
+    }
+
+    // Test sys_lseek and sys_read
+    fd = sys_open("testfile.txt", O_RDONLY, 0);
+    if (fd != -1) {
+        off_t new_offset = sys_lseek(fd, 7, SEEK_SET);
+        if (new_offset != (off_t)-1) {
+            char buffer[20] = {0};
+            size_t bytes_read = sys_read(fd, buffer, sizeof(buffer) - 1);
+            if (bytes_read != (size_t)-1) {
+                printf("Read from offset %lld: %s\n", (long long)new_offset, buffer);
+            } else {
+                log_error("Failed to read from file after seek");
+            }
+        } else {
+            log_error("Failed to seek in file");
+        }
+        sys_close(fd);
+    } else {
+        log_error("Failed to open file for seeking");
+        return 1;
+    }
+
+    // Test sys_fstat
+    fd = sys_open("testfile.txt", O_RDONLY, 0);
+    if (fd != -1) {
+        struct stat st;
+        if (sys_fstat(fd, &st) == 0) {
+            printf("File size: %lld bytes\n", (long long)st.st_size);
+            printf("File mode: %o\n", st.st_mode & 0777);
+        } else {
+            log_error("Failed to get file stats");
+        }
+        sys_close(fd);
+    } else {
+        log_error("Failed to open file for stat");
+        return 1;
+    }
+
+    // Test sys_exit
+    printf("Exiting with code 0\n");
+    sys_exit(0);
+
+    // This line should never be reached
+    return 1;
+}
