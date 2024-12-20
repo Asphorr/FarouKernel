@@ -1,110 +1,144 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "frame.h"
+#include <cstddef>
+#include <forward_list>
+#include <memory>
+#include <utility>
 
-// Global variables
-static int numFrames = 0;
-static Frame* frames = NULL;
+template <typename T>
+struct ListNode {
+    T element;
+    std::unique_ptr<ListNode<T>> next;
+};
 
-// Function definitions
+template <typename T>
+class LinkedList {
+ public:
+    LinkedList() : head_(nullptr), tail_(nullptr), size_(0) {}
 
-// Allocate a new frame and return a pointer to it
-Frame* allocateFrame() {
-    Frame* newFrame = malloc(sizeof(struct Frame));
-    newFrame->number = numFrames++;
-    newFrame->prev = NULL;
-    newFrame->next = NULL;
-    newFrame->data = NULL;
-    return newFrame;
-}
-
-// Deallocate a frame and release its resources
-void deallocateFrame(Frame* frame) {
-    if (frame == NULL) {
-        return;
+    // Move constructor
+    LinkedList(LinkedList&& other) noexcept : head_(other.head_), tail_(other.tail_), size_(other.size_) {
+        other.head_ = nullptr;
+        other.tail_ = nullptr;
+        other.size_ = 0;
     }
-    numFrames--;
-    if (frame->prev != NULL) {
-        frame->prev->next = frame->next;
-    } else {
-        frames = frame->next;
-    }
-    if (frame->next != NULL) {
-        frame->next->prev = frame->prev;
-    }
-    free(frame);
-}
 
-// Set the data associated with a frame
-void setFrameData(Frame* frame, void* data) {
-    frame->data = data;
-}
-
-// Get the data associated with a frame
-void* getFrameData(Frame* frame) {
-    return frame->data;
-}
-
-// Insert a frame into the list of frames
-void insertFrame(Frame* frame) {
-    if (frames == NULL) {
-        frames = frame;
-    } else {
-        Frame* current = frames;
-        while (current->next != NULL) {
-            current = current->next;
+    // Copy assignment operator
+    LinkedList& operator=(const LinkedList& other) {
+        if (this != &other) {
+            clear();
+            for (auto iter = other.begin(); iter != other.end(); ++iter) {
+                emplace_back(*iter);
+            }
         }
-        current->next = frame;
-        frame->prev = current;
+        return *this;
     }
-}
 
-// Remove a frame from the list of frames
-void removeFrame(Frame* frame) {
-    if (frame == NULL) {
-        return;
+    // Move assignment operator
+    LinkedList& operator=(LinkedList&& other) noexcept {
+        swap(other);
+        return *this;
     }
-    if (frame->prev == NULL) {
-        frames = frame->next;
-    } else {
-        frame->prev->next = frame->next;
+
+    // Destructor
+    ~LinkedList() { clear(); }
+
+    // Element access
+    T& front() { return head_->element; }
+    const T& front() const { return head_->element; }
+
+    T& back() { return tail_->element; }
+    const T& back() const { return tail_->element; }
+
+    // Iterators
+    template <typename U>
+    friend class iterator;
+
+    typedef iterator<T> iterator;
+    typedef iterator<const T> const_iterator;
+
+    iterator begin() { return iterator(head_); }
+    const_iterator begin() const { return const_iterator(head_); }
+
+    iterator end() { return iterator(nullptr); }
+    const_iterator end() const { return const_iterator(nullptr); }
+
+    // Capacity
+    size_type size() const { return size_; }
+    bool empty() const { return !size_; }
+
+    // Modifiers
+    void push_front(const T& x) { insert(x, head_); }
+    void push_front(T&& x) { insert(std::move(x), head_); }
+
+    void push_back(const T& x) { insert(x, nullptr); }
+    void push_back(T&& x) { insert(std::move(x), nullptr); }
+
+    void pop_front() { erase(head_); }
+    void pop_back() { erase(tail_); }
+
+    void clear() {
+        while (!empty()) {
+            pop_front();
+        }
     }
-    if (frame->next == NULL) {
-        frame->prev->next = NULL;
+
+ private:
+    // Helper functions
+    void insert(const T& x, ListNode<T>* position) {
+        auto newNode = std::make_unique<ListNode<T>>(x);
+        if (position == nullptr) {
+            head_ = newNode.get();
+            tail_ = newNode.get();
+        } else {
+            newNode->next = position->next;
+            position->next = newNode.get();
+            if (newNode->next == nullptr) {
+                tail_ = newNode.get();
+            }
+        }
+        size_++;
     }
-    free(frame);
-}
 
-int main() {
-    // Test cases
-    Frame* frame1 = allocateFrame();
-    Frame* frame2 = allocateFrame();
-    Frame* frame3 = allocateFrame();
+    void insert(T&& x, ListNode<T>* position) {
+        auto newNode = std::make_unique<ListNode<T>>(std::move(x));
+        if (position == nullptr) {
+            head_ = newNode.get();
+            tail_ = newNode.get();
+        } else {
+            newNode->next = position->next;
+            position->next = newNode.get();
+            if (newNode->next == nullptr) {
+                tail_ = newNode.get();
+            }
+        }
+        size_++;
+    }
 
-    setFrameData(frame1, (void*) 1);
-    setFrameData(frame2, (void*) 2);
-    setFrameData(frame3, (void*) 3);
+    void erase(ListNode<T>* position) {
+        if (position == nullptr || empty()) {
+            return;
+        }
+        if (position == head_) {
+            head_ = position->next;
+        }
+        if (position == tail_) {
+            tail_ = position->prev;
+        }
+        if (position->prev != nullptr) {
+            position->prev->next = position->next;
+        }
+        if (position->next != nullptr) {
+            position->next->prev = position->prev;
+        }
+        size_--;
+    }
 
-    insertFrame(frame1);
-    insertFrame(frame2);
-    insertFrame(frame3);
+    void swap(LinkedList& other) {
+        std::swap(head_, other.head_);
+        std::swap(tail_, other.tail_);
+        std::swap(size_, other.size_);
+    }
 
-    void* data1 = getFrameData(frame1);
-    void* data2 = getFrameData(frame2);
-    void* data3 = getFrameData(frame3);
-
-    printf("Data in frame 1: %d\n", (int) data1);
-    printf("Data in frame 2: %d\n", (int) data2);
-    printf("Data in frame 3: %d\n", (int) data3);
-
-    removeFrame(frame2);
-
-    data1 = getFrameData(frame1);
-    data2 = getFrameData(frame3);
-
-    printf("Data in frame 1 after removal: %d\n", (int) data1);
-    printf("Data in frame 3 after removal: %d\n", (int) data2);
-
-    return 0;
-}
+    ListNode<T>* head_;
+    ListNode<T>* tail_;
+    size_t size_;
+};
