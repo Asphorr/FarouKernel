@@ -1,106 +1,151 @@
-#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <unistd.h>
-#include <sys/mman.h>
-#include <asm/io.h>
-#include <asm/interrupt.h>
+#include <string.h>
+#include <pthread.h>
+#include <signal.h>
+#include <syslog.h>
+#include <x86intrin.h>
 
-#define PAGE_SIZE 4096
-#define BUFFER_SIZE 1024
+#define IDT_SIZE 256
+#define MAX_PROCESSORS 4
 
-volatile uint8_t *idt;
-volatile uint8_t *gdt;
+typedef struct {
+    uint16_t offset_low;
+    uint16_t selector;
+    uint8_t ist : 3;
+    uint8_t reserved : 5;
+    uint8_t type : 4;
+    uint8_t zero : 1;
+    uint8_t dpl : 2;
+    uint8_t present : 1;
+    uint16_t offset_middle;
+    uint32_t offset_high;
+    uint32_t reserved2;
+} __attribute__((packed)) idt_entry_t;
 
-static inline void load_idt(uintptr_t address) {
-    asm volatile("lidt (%0)" : : "r"(address));
+typedef struct {
+    uint16_t limit;
+    uint64_t base;
+} __attribute__((packed)) idt_pointer_t;
+
+typedef struct {
+    uint64_t rax, rbx, rcx, rdx, rsi, rdi, rbp, r8, r9, r10, r11, r12, r13, r14, r15;
+    uint64_t rflags;
+} cpu_state_t;
+
+typedef struct {
+    uint64_t rip, cs, rflags, rsp, ss;
+} interrupt_frame_t;
+
+static _Alignas(16) idt_entry_t idt[IDT_SIZE];
+static idt_pointer_t idtp;
+static _Atomic bool keep_running = true;
+
+static void load_idt(const idt_pointer_t *idt_ptr) {
+    __asm__ volatile("lidt %0" : : "m" (*idt_ptr) : "memory");
 }
 
-static inline void load_gdt(uintptr_t address) {
-    asm volatile("lgdt (%0)" : : "r"(address));
+static void set_idt_entry(int num, uintptr_t handler, uint16_t sel, uint8_t flags) {
+    idt[num] = (idt_entry_t) {
+        .offset_low = handler & 0xFFFF,
+        .selector = sel,
+        .ist = 0,
+        .reserved = 0,
+        .type = flags & 0xF,
+        .zero = 0,
+        .dpl = (flags >> 5) & 0x3,
+        .present = 1,
+        .offset_middle = (handler >> 16) & 0xFFFF,
+        .offset_high = handler >> 32,
+        .reserved2 = 0
+    };
 }
 
-static inline void set_vector(uint8_t vector, uintptr_t address) {
-    idt[vector] = (address & 0xFFFFFFFF) | 0x80000000;
-}
+static void setup_idt(void) {
+    idtp = (idt_pointer_t){
+        .limit = sizeof(idt) - 1,
+        .base = (uint64_t)idt
+    };
 
-static inline void remap_interrupts() {
-    // Remap interrupt vectors to our custom handler
-    set_vector(0x20, (uintptr_t)custom_handler);
-    set_vector(0x21, (uintptr_t)custom_handler + 1);
-    set_vector(0x22, (uintptr_t)custom_handler + 2);
-    set_vector(0x23, (uintptr_t)custom_handler + 3);
-}
-
-static inline void enable_interrupts() {
-    // Enable interrupts in the CPU
-    asm volatile("sti");
-}
-
-static inline void disable_interrupts() {
-    // Disable interrupts in the CPU
-    asm volatile("cli");
-}
-
-static void custom_handler(struct interrupt_frame *frame) {
-    // Get the interrupt number from the frame
-    uint8_t vector = frame->vector;
-
-    // Check if the interrupt is a software interrupt (vector == 0x20)
-    if (vector == 0x20) {
-        // If it is, check the error code to determine what to do
-        uint32_t err_code = frame->error_code;
-
-        // Handle different software interrupts here
-        switch (err_code) {
-            case 0x12345678:
-                // Do something for this error code
-                break;
-            default:
-                // Default handling for unknown errors
-                break;
-        }
-    } else {
-        // Handle hardware interrupts here
-        switch (vector) {
-            case 0x21:
-                // Handle interrupt 0x21
-                break;
-            case 0x22:
-                // Handle interrupt 0x22
-                break;
-            case 0x23:
-                // Handle interrupt 0x23
-                break;
-        }
+    memset(idt, 0, sizeof(idt));
+    for (int i = 0; i < IDT_SIZE; i++) {
+        set_idt_entry(i, (uintptr_t)default_interrupt_handler, 0x08, 0x8E);
     }
 
-    // Clear the interrupt flag in the CPU
-    asm volatile("sti");
+    load_idt(&idtp);
+}
+
+static inline void enable_interrupts(void) {
+    _mm_lfence();
+    __asm__ volatile("sti" ::: "memory");
+}
+
+static inline void disable_interrupts(void) {
+    __asm__ volatile("cli" ::: "memory");
+    _mm_mfence();
+}
+
+static void default_interrupt_handler(interrupt_frame_t *frame, cpu_state_t *cpu) {
+    uint8_t interrupt_number = frame->rip & 0xFF;
+    syslog(LOG_INFO, "Interrupt 0x%X handled on CPU %d", interrupt_number, smp_processor_id());
+    // Log CPU state and frame info if needed
+}
+
+static void signal_handler(int sig) {
+    (void)sig;
+    atomic_store_explicit(&keep_running, false, memory_order_release);
+    syslog(LOG_INFO, "Signal received, initiating shutdown.");
+}
+
+static void* processor_main(void* arg) {
+    int cpu_id = *(int*)arg;
+    free(arg);
+
+    syslog(LOG_INFO, "Processor %d starting up", cpu_id);
+    setup_idt();
+    enable_interrupts();
+
+    while (atomic_load_explicit(&keep_running, memory_order_acquire)) {
+        _mm_pause();
+    }
+
+    disable_interrupts();
+    syslog(LOG_INFO, "Processor %d shutting down safely", cpu_id);
+    return NULL;
 }
 
 int main(void) {
-    // Allocate memory for the IDT and GDT
-    idt = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    gdt = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    openlog("system_interrupts", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL1);
 
-    // Set up the IDT and GDT
-    for (int i = 0; i < 256; i++) {
-        idt[i] = (i << 3) | 0x80000000;
+    pthread_t threads[MAX_PROCESSORS];
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGINT);
+    sigaddset(&set, SIGTERM);
+    pthread_sigmask(SIG_BLOCK, &set, NULL);
+
+    for (int i = 0; i < MAX_PROCESSORS; i++) {
+        int *cpu_id = malloc(sizeof(int));
+        if (!cpu_id) {
+            syslog(LOG_ERR, "Failed to allocate memory for CPU ID");
+            continue;
+        }
+        *cpu_id = i;
+        if (pthread_create(&threads[i], NULL, processor_main, cpu_id) != 0) {
+            syslog(LOG_ERR, "Failed to create thread for processor %d", i);
+            free(cpu_id);
+        }
     }
 
-    // Load the IDT and GDT
-    load_idt((uintptr_t)idt);
-    load_gdt((uintptr_t)gdt);
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
 
-    // Remap interrupt vectors to our custom handler
-    remap_interrupts();
+    pthread_sigmask(SIG_UNBLOCK, &set, NULL);
 
-    // Enable interrupts in the CPU
-    enable_interrupts();
+    for (int i = 0; i < MAX_PROCESSORS; i++) {
+        pthread_join(threads[i], NULL);
+    }
 
-    // Wait forever
-    while (true) {
-    // Handle incoming interrupts here
-    asm volatile("sti");
+    closelog();
+    return 0;
 }
