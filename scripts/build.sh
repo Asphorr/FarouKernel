@@ -1,43 +1,51 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Set the project name
-PROJECT_NAME="funicod"
+# Project configuration
+PROJECT="funicod"
+ARCH="x86_64"
+SOURCES=("main.c" "utils.c")
+CPP_SOURCES=("main.cpp" "utils.cpp")
 
-# Set the target architecture
-TARGET_ARCHITECTURE="x86_64"
+# Compiler settings
+export CC="gcc"
+export CXX="g++"
+export LD="ld.gold"  # Using gold linker by default
 
-# Set the C compiler
-CC=gcc
+# Base flags for optimization
+BASE_FLAGS="-Wall -O3 -march=$ARCH -mtune=$ARCH -pipe -flto -fPIE \
+           -funroll-loops -finline-functions -ffunction-sections \
+           -fdata-sections -fwhole-program"
 
-# Set the C++ compiler
-CXX=g++
+export CFLAGS="$BASE_FLAGS"
+export CXXFLAGS="$BASE_FLAGS -std=c++17"
+export LDFLAGS="-lpthread -lrt -lm"
 
-# Set the linker
-LD=ld
+# Build function
+build() {
+    echo "Building $PROJECT..."
+    
+    # Compile C sources
+    $CC $CFLAGS "${SOURCES[@]}" -c
+    
+    # Compile C++ sources and link
+    $CXX $CXXFLAGS "${CPP_SOURCES[@]}" *.o $LDFLAGS -o "$PROJECT"
+    
+    # Optimize binary
+    strip --strip-all "$PROJECT"
+    
+    # Compress binary (if UPX is installed)
+    command -v upx >/dev/null 2>&1 && upx -9 "$PROJECT"
+}
 
-# Set the flags for the C compiler
-CFLAGS="-Wall -O3 -march=$TARGET_ARCHITECTURE -mtune=$TARGET_ARCHITECTURE -pipe"
+# Package function
+package() {
+    echo "Packaging $PROJECT..."
+    tar czf "$PROJECT.tgz" "$PROJECT" README.md LICENSE 2>/dev/null
+}
 
-# Set the flags for the C++ compiler
-CXXFLAGS="$CFLAGS -std=c++17"
+# Main execution
+build
+package
 
-# Set the libraries to link against
-LIBS="-lpthread -lrt -lm"
-
-# Set the source files
-SOURCES=(main.c utils.c)
-
-# Set the object files
-OBJECTS=(${SOURCES[@]/%/.o})
-
-# Build the objects
-$CC $CFLAGS ${SOURCES[*]} -o ${OBJECTS[*]}
-
-# Build the executables
-$CXX $CXXFLAGS main.cpp utils.cpp -o $PROJECT_NAME
-
-# Link the objects
-$LD $OBJECTS $LIBS -o $PROJECT_NAME
-
-# Run the executable
-./$PROJECT_NAME
+# Run the program
+./"$PROJECT"
