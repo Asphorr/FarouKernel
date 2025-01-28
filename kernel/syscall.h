@@ -2,7 +2,6 @@
 #define SYSCALLS_H
 
 #include <stdint.h>
-#include <stddef.h>
 #include <sys/stat.h>
 
 // System call numbers
@@ -17,19 +16,22 @@ enum syscall_number {
     SYS_MAX
 };
 
-// System call handlers
-size_t sys_write(int fd, const void *buf, size_t count);
-size_t sys_read(int fd, void *buf, size_t count);
-int sys_open(const char *path, int flags, int mode);
-int sys_close(int fd);
-off_t sys_lseek(int fd, off_t offset, int whence);
-int sys_fstat(int fd, struct stat *st);
-void sys_exit(int status) __attribute__((noreturn));
+// Unified handler type for all system calls
+typedef uint64_t (*syscall_handler_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
-// System call entry point
-size_t syscall_entry(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4);
+// System call handlers with unified signature
+uint64_t sys_write(uint64_t fd, uint64_t buf, uint64_t count, uint64_t unused1, uint64_t unused2);
+uint64_t sys_read(uint64_t fd, uint64_t buf, uint64_t count, uint64_t unused1, uint64_t unused2);
+uint64_t sys_open(uint64_t path, uint64_t flags, uint64_t mode, uint64_t unused1, uint64_t unused2);
+uint64_t sys_close(uint64_t fd, uint64_t unused1, uint64_t unused2, uint64_t unused3, uint64_t unused4);
+uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence, uint64_t unused1, uint64_t unused2);
+uint64_t sys_fstat(uint64_t fd, uint64_t st_ptr, uint64_t unused1, uint64_t unused2, uint64_t unused3);
+uint64_t sys_exit(uint64_t status, uint64_t unused1, uint64_t unused2, uint64_t unused3, uint64_t unused4) __attribute__((noreturn));
 
-// Error logging function
+// System call entry point with correct return type
+uint64_t syscall_entry(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4);
+
+// Error logging declaration remains
 void log_error(const char *message);
 
 #endif // SYSCALLS_H
