@@ -14,6 +14,7 @@
 #include <shared_mutex>
 #include <unordered_set>
 #include <iomanip>
+#include <limits>
 
 // Logging utility for debugging and error reporting
 enum class LogLevel {
@@ -65,9 +66,9 @@ private:
 public:
     // Constructor: Initialize memory manager with a total memory size
     explicit MemoryManager(std::size_t totalSize)
-        : memory_pool(std::make_unique<char[]>(totalSize)), pool_size(totalSize) {
-        // Ensure the pool size is aligned
-        if (pool_size < align_up(1, alignment)) {
+        : pool_size(align_up(totalSize, alignment)), // Ensure pool size is aligned
+          memory_pool(std::make_unique<char[]>(pool_size)) {
+        if (pool_size < alignment) {
             throw std::invalid_argument("Pool size too small for alignment.");
         }
         blocks.emplace_back(0, pool_size, true); // Start with one large free block
@@ -87,13 +88,11 @@ public:
         }
     }
 
-    // Disable copy semantics
+    // Disable copy and move semantics
     MemoryManager(const MemoryManager&) = delete;
     MemoryManager& operator=(const MemoryManager&) = delete;
-
-    // Enable move semantics
-    MemoryManager(MemoryManager&&) = default;
-    MemoryManager& operator=(MemoryManager&&) = default;
+    MemoryManager(MemoryManager&&) = delete;
+    MemoryManager& operator=(MemoryManager&&) = delete;
 
     // Allocate memory of given size. Returns pointer to allocated memory or nullptr if failed.
     T* allocate(std::size_t size) {
@@ -108,34 +107,20 @@ public:
         logMessage(LogLevel::INFO, "Allocating " + std::to_string(size) + " objects (" + std::to_string(bytes_needed) + " bytes).");
 
         // Best-Fit: Find the smallest free block that fits the requested size
-        auto it = std::min_element(blocks.begin(), blocks.end(),
-            [bytes_needed](const Block& a, const Block& b) {
-                if (!a.is_free && !b.is_free) return false;
-                if (a.is_free && b.is_free) {
-                    return a.size < b.size;
+        auto it = blocks.end();
+        std::size_t best_size = std::numeric_limits<std::size_t>::max();
+        for (auto current = blocks.begin(); current != blocks.end(); ++current) {
+            if (current->is_free && current->size >= bytes_needed) {
+                if (current->size < best_size) {
+                    best_size = current->size;
+                    it = current;
                 }
-                return a.is_free && a.size < b.size;
-            });
+            }
+        }
 
-        if (it == blocks.end() || !it->is_free || it->size < bytes_needed) {
-            // No suitable block found; attempt to expand the pool
-            if (!expand_pool(bytes_needed)) {
-                logMessage(LogLevel::ERROR, "Allocation failed: Not enough memory.");
-                return nullptr;
-            }
-            // Recalculate the iterator after expansion
-            it = std::min_element(blocks.begin(), blocks.end(),
-                [bytes_needed](const Block& a, const Block& b) {
-                    if (!a.is_free && !b.is_free) return false;
-                    if (a.is_free && b.is_free) {
-                        return a.size < b.size;
-                    }
-                    return a.is_free && a.size < b.size;
-                });
-            if (it == blocks.end() || !it->is_free || it->size < bytes_needed) {
-                logMessage(LogLevel::ERROR, "Allocation failed after pool expansion.");
-                return nullptr;
-            }
+        if (it == blocks.end()) {
+            logMessage(LogLevel::ERROR, "Allocation failed: Not enough memory.");
+            return nullptr;
         }
 
         // Allocate memory from the selected block
@@ -229,8 +214,8 @@ public:
             std::size_t remaining = current_size - new_bytes_needed;
             it->size = new_bytes_needed;
             Block new_free(it->offset + new_bytes_needed, remaining, true);
-            blocks.emplace(it + 1, new_free);
-            merge_adjacent_free_blocks(it + 1);
+            auto inserted = blocks.emplace(it + 1, new_free);
+            merge_adjacent_free_blocks(inserted);
             logMessage(LogLevel::INFO, "Shrunk block at offset " + std::to_string(it->offset) +
                                        " from " + std::to_string(current_size) +
                                        " to " + std::to_string(new_bytes_needed));
@@ -239,26 +224,25 @@ public:
 
         // Attempt to expand the block in place by checking the next block
         auto next_it = std::next(it);
-        if (next_it != blocks.end() && next_it->is_free &&
-            (it->size + next_it->size) >= new_bytes_needed) {
-
-            std::size_t additional = new_bytes_needed - it->size;
-            if (next_it->size > additional) {
-                // Split the next block
-                Block expanded_block(next_it->offset, additional, false);
-                Block remaining_free(next_it->offset + additional, next_it->size - additional, true);
-                blocks.erase(next_it);
-                blocks.emplace(it + 1, expanded_block);
-                blocks.emplace(it + 2, remaining_free);
-            } else {
-                // Consume the entire next block
-                it->size += next_it->size;
-                blocks.erase(next_it);
+        if (next_it != blocks.end() && next_it->is_free) {
+            std::size_t combined_size = it->size + next_it->size;
+            if (combined_size >= new_bytes_needed) {
+                std::size_t additional = new_bytes_needed - it->size;
+                if (additional <= next_it->size) {
+                    // Take 'additional' bytes from the next block
+                    it->size += additional;
+                    if (next_it->size > additional) {
+                        next_it->offset += additional;
+                        next_it->size -= additional;
+                        merge_adjacent_free_blocks(next_it);
+                    } else {
+                        blocks.erase(next_it);
+                    }
+                    logMessage(LogLevel::INFO, "Expanded block at offset " + std::to_string(it->offset) +
+                                               " to size " + std::to_string(it->size));
+                    return address;
+                }
             }
-
-            logMessage(LogLevel::INFO, "Expanded block at offset " + std::to_string(it->offset) +
-                                       " to size " + std::to_string(it->size));
-            return address;
         }
 
         // Allocate a new block and copy data
@@ -276,6 +260,8 @@ public:
 
     // Copy data from source to destination. Returns true on success.
     bool copy(T* sourceAddress, T* destinationAddress, std::size_t count) {
+        static_assert(std::is_trivially_copyable_v<T>, "copy requires T to be trivially copyable.");
+
         if (sourceAddress == nullptr || destinationAddress == nullptr || count == 0) {
             logMessage(LogLevel::WARNING, "Invalid parameters for copy operation.");
             return false;
@@ -308,7 +294,6 @@ public:
         for (const auto& block : blocks) {
             if (offset >= block.offset && offset < block.offset + block.size) {
                 if (!block.is_free) {
-                    // Calculate the number of T elements that fit in the block
                     std::size_t count = block.size / sizeof(T);
                     return std::span<T>(reinterpret_cast<T*>(memory_pool.get() + block.offset), count);
                 }
@@ -364,7 +349,7 @@ private:
 
     // Merge adjacent free blocks around the given iterator
     void merge_adjacent_free_blocks(typename std::vector<Block>::iterator it) {
-        if (it == blocks.end()) return;
+        if (it == blocks.end() || !it->is_free) return;
 
         // Merge with next blocks
         while (std::next(it) != blocks.end() && std::next(it)->is_free) {
@@ -382,26 +367,5 @@ private:
                 logMessage(LogLevel::INFO, "Merged with previous free block. New size: " + std::to_string(prev->size));
             }
         }
-    }
-
-    // Attempt to expand the memory pool to accommodate additional bytes
-    bool expand_pool(std::size_t additional_bytes) {
-        std::size_t new_size = pool_size;
-        std::size_t aligned_additional = align_up(additional_bytes, alignment);
-        while (new_size < pool_size + aligned_additional) {
-            new_size *= 2; // Double the pool size for exponential growth
-            if (new_size <= pool_size) { // Overflow check
-                logMessage(LogLevel::ERROR, "Pool expansion failed: Size overflow.");
-                return false;
-            }
-        }
-
-        std::unique_ptr<char[]> new_pool = std::make_unique<char[]>(new_size);
-        std::memcpy(new_pool.get(), memory_pool.get(), pool_size);
-        memory_pool = std::move(new_pool);
-        blocks.emplace_back(pool_size, new_size - pool_size, true);
-        logMessage(LogLevel::INFO, "Expanded memory pool to " + std::to_string(new_size) + " bytes.");
-        pool_size = new_size;
-        return true;
     }
 };
