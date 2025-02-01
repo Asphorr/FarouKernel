@@ -1,396 +1,292 @@
-#include <iostream>
-#include <vector>
-#include <memory>
 #include <algorithm>
-#include <functional>
-#include <stdexcept>
 #include <csignal>
+#include <condition_variable>
+#include <cstdlib>
+#include <ctime>
+#include <fstream>
+#include <functional>
+#include <future>
+#include <iostream>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <unistd.h>
 #include <thread>
-#include <mutex>
-#include <condition_variable>
+#include <unistd.h>
+#include <vector>
 
-void adjustPriorities() {
-    std::lock_guard<std::mutex> lock(m_processMutex);
-    for (auto& process : m_processInfos) {
-        // Logic to adjust priority based on some criteria
-        // For example, lower priority for long-running processes
-        if (process.isThread || process.isPaused) {
-            continue;
-        }
-        // Example criteria: Increase priority for new processes
-        if (process.priority < 10) {
-            setProcessPriority(process.pid, process.priority + 1);
-        }
+class ProcessManager {
+public:
+    // Singleton instance access
+    static ProcessManager& instance() {
+        static ProcessManager instance;
+        return instance;
     }
-}
 
-struct ResourceUsage {
-    int cpuUsage;
-    int memoryUsage;
+    // Delete copy/move constructors and assignment operators
+    ProcessManager(const ProcessManager&) = delete;
+    ProcessManager& operator=(const ProcessManager&) = delete;
+    ProcessManager(ProcessManager&&) = delete;
+    ProcessManager& operator=(ProcessManager&&) = delete;
+
+    // Process management interface
+    pid_t addProcess(std::function<void()> func, int priority = 0);
+    void addThreadProcess(std::function<void()> func, int priority = 0);
+    void waitForAll();
+    void terminateAll();
+    void pauseProcess(pid_t pid);
+    void resumeProcess(pid_t pid);
+    void setProcessPriority(pid_t pid, int priority);
+    void reapZombies();
+
+    // System configuration and maintenance
+    void loadConfiguration(const std::string& configFile);
+    void adjustPriorities();
+    void scheduleProcesses();
+    void loadBalance();
+    void recoverProcess(pid_t pid);
+    void setupIPC(pid_t pid);
+
+    // Signal handling
+    void setSignalHandler(int signal, void (*handler)(int));
+
+private:
+    // Nested ProcessInfo structure
+    struct ProcessInfo {
+        pid_t pid;
+        int priority;
+        std::thread workerThread;
+        bool isThread;
+        bool isPaused;
+        std::function<void()> task;
+    };
+
+    // Private constructor/destructor for singleton
+    ProcessManager();
+    ~ProcessManager();
+
+    // Internal helper functions
+    void handleSyscallError(const char* message);
+    void terminateProcess(pid_t pid);
+    void logEvent(const std::string& message);
+    void logProcessEvent(pid_t pid, const std::string& event);
+    bool checkProcessStatus(pid_t pid, int& status);
+    bool checkPermissions(pid_t pid, uid_t uid);
+    void isolateProcess(pid_t pid);
+    void processCLI();
+
+    // Member variables
+    std::vector<ProcessInfo> m_processInfos;
+    std::mutex m_processMutex;
+    std::condition_variable m_cv;
+    std::mutex m_logMutex;
 };
 
-ResourceUsage getResourceUsage(pid_t pid) {
-    ResourceUsage usage = {0, 0};
-    // Logic to fetch CPU and memory usage for the process
-    // This may involve reading from /proc/[pid]/stat or similar
-    // Placeholder values for demonstration
-    usage.cpuUsage = rand() % 100;  // Simulated value
-    usage.memoryUsage = rand() % 100;  // Simulated value
-    return usage;
+// ProcessManager Implementation
+
+ProcessManager::ProcessManager() {
+    std::srand(std::time(nullptr));  // Seed for simulated resource usage
 }
 
-void scheduleProcesses() {
-    std::lock_guard<std::mutex> lock(m_processMutex);
-    // Implement round-robin scheduling
-    std::sort(m_processInfos.begin(), m_processInfos.end(), [](const ProcessInfo& a, const ProcessInfo& b) {
-        return a.priority > b.priority;
-    });
-    for (auto& process : m_processInfos) {
-        // Schedule process based on priority
+ProcessManager::~ProcessManager() {
+    terminateAll();
+}
+
+void ProcessManager::handleSyscallError(const char* message) {
+    perror(message);
+    throw std::runtime_error(message);
+}
+
+pid_t ProcessManager::addProcess(std::function<void()> func, int priority) {
+    pid_t pid = fork();
+    if (pid == -1) {
+        handleSyscallError("Failed to create process");
+    } else if (pid == 0) {  // Child process
+        try {
+            func();
+            exit(EXIT_SUCCESS);
+        } catch (const std::exception& e) {
+            std::cerr << "Child process error: " << e.what() << '\n';
+            exit(EXIT_FAILURE);
+        }
     }
+
+    // Parent process
+    std::lock_guard<std::mutex> lock(m_processMutex);
+    m_processInfos.push_back({pid, priority, std::thread(), false, false, func});
+    return pid;
 }
 
-void loadBalance() {
+void ProcessManager::addThreadProcess(std::function<void()> func, int priority) {
     std::lock_guard<std::mutex> lock(m_processMutex);
-    // Logic to distribute processes across multiple CPUs
-    // Placeholder example
-    int cpuCount = std::thread::hardware_concurrency();
+    std::thread t([this, func, priority]() {
+        try {
+            func();
+        } catch (const std::exception& e) {
+            logEvent("Thread process failed: " + std::string(e.what()));
+        }
+    });
+    m_processInfos.push_back({0, priority, std::move(t), true, false, func});
+}
+
+void ProcessManager::waitForAll() {
+    std::unique_lock<std::mutex> lock(m_processMutex);
+    m_cv.wait(lock, [this] { return m_processInfos.empty(); });
+}
+
+void ProcessManager::terminateAll() {
+    std::lock_guard<std::mutex> lock(m_processMutex);
     for (auto& process : m_processInfos) {
-        if (!process.isThread && !process.isPaused) {
-            // Assign process to a CPU
-            int cpu = process.pid % cpuCount;
-            // System-specific logic to assign process to CPU
+        if (!process.isThread) {
+            terminateProcess(process.pid);
+        } else if (process.workerThread.joinable()) {
+            process.workerThread.join();
+        }
+    }
+    m_processInfos.clear();
+    m_cv.notify_all();
+}
+
+void ProcessManager::pauseProcess(pid_t pid) {
+    std::lock_guard<std::mutex> lock(m_processMutex);
+    for (auto& process : m_processInfos) {
+        if (process.pid == pid && !process.isPaused) {
+            if (kill(pid, SIGSTOP) == -1) {
+                handleSyscallError("Failed to pause process");
+            }
+            process.isPaused = true;
+            break;
         }
     }
 }
 
-void logEvent(const std::string& message) {
+void ProcessManager::resumeProcess(pid_t pid) {
+    std::lock_guard<std::mutex> lock(m_processMutex);
+    for (auto& process : m_processInfos) {
+        if (process.pid == pid && process.isPaused) {
+            if (kill(pid, SIGCONT) == -1) {
+                handleSyscallError("Failed to resume process");
+            }
+            process.isPaused = false;
+            break;
+        }
+    }
+}
+
+void ProcessManager::setProcessPriority(pid_t pid, int priority) {
+    std::lock_guard<std::mutex> lock(m_processMutex);
+    for (auto& process : m_processInfos) {
+        if (process.pid == pid) {
+            process.priority = priority;
+            if (setpriority(PRIO_PROCESS, pid, priority) == -1) {
+                handleSyscallError("Failed to set process priority");
+            }
+            break;
+        }
+    }
+}
+
+void ProcessManager::reapZombies() {
+    std::lock_guard<std::mutex> lock(m_processMutex);
+    bool wasEmpty = m_processInfos.empty();
+    
+    auto it = m_processInfos.begin();
+    while (it != m_processInfos.end()) {
+        if (!it->isThread) {
+            int status;
+            if (waitpid(it->pid, &status, WNOHANG) > 0) {
+                logProcessEvent(it->pid, "Process exited with status: " + std::to_string(WEXITSTATUS(status)));
+                it = m_processInfos.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+
+    if (!wasEmpty && m_processInfos.empty()) {
+        m_cv.notify_all();
+    }
+}
+
+void ProcessManager::logEvent(const std::string& message) {
+    std::lock_guard<std::mutex> lock(m_logMutex);
     std::ofstream logFile("process_manager.log", std::ios::app);
     if (logFile.is_open()) {
         logFile << message << std::endl;
     }
 }
 
-void logProcessEvent(pid_t pid, const std::string& event) {
+void ProcessManager::logProcessEvent(pid_t pid, const std::string& event) {
     logEvent("Process " + std::to_string(pid) + ": " + event);
 }
 
-void recoverProcess(pid_t pid) {
+void ProcessManager::adjustPriorities() {
     std::lock_guard<std::mutex> lock(m_processMutex);
     for (auto& process : m_processInfos) {
-        if (process.pid == pid && !process.isThread && checkProcessStatus(pid) != 0) {
-            // Logic to restart the process
-            logProcessEvent(pid, "Process failed, restarting");
-            addProcess([] {
-                // Logic to restart the process function
-            }, process.priority);
+        if (process.isThread || process.isPaused) continue;
+
+        // Example priority adjustment logic
+        if (process.priority < 10) {
+            setProcessPriority(process.pid, process.priority + 1);
         }
     }
 }
 
-bool checkPermissions(pid_t pid, uid_t uid) {
-    struct stat processStat;
-    if (stat(("/proc/" + std::to_string(pid)).c_str(), &processStat) == 0) {
-        return processStat.st_uid == uid;
-    }
-    return false;
-}
-
-void ensurePermissions(pid_t pid) {
-    if (!checkPermissions(pid, getuid())) {
-        throw std::runtime_error("Permission denied");
-    }
-}
-
-void isolateProcess(pid_t pid) {
-    // Logic to isolate process using namespaces and cgroups
-    // Placeholder example
-    if (unshare(CLONE_NEWNS | CLONE_NEWCGROUP) == -1) {
-        handleSyscallError("Failed to isolate process");
-    }
-}
-
-std::future<void> asyncAddProcess(std::function<void()> func, int priority = 0) {
-    return std::async(std::launch::async, [this, func, priority] {
-        addProcess(func, priority);
-    });
-}
-
-void optimizeCriticalSections() {
-    // Use profiling tools to identify bottlenecks
-    // Placeholder example: move heavy operations out of critical sections
+void ProcessManager::scheduleProcesses() {
     std::lock_guard<std::mutex> lock(m_processMutex);
-    for (auto& process : m_processInfos) {
-        // Profile and optimize
+    std::sort(m_processInfos.begin(), m_processInfos.end(),
+        [](const ProcessInfo& a, const ProcessInfo& b) {
+            return a.priority > b.priority;
+        });
+}
+
+void ProcessManager::setSignalHandler(int signal, void (*handler)(int)) {
+    struct sigaction sa;
+    sa.sa_handler = handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    if (sigaction(signal, &sa, nullptr) == -1) {
+        handleSyscallError("Failed to set signal handler");
     }
 }
 
-void setupIPC(pid_t pid) {
-    // Logic to setup IPC mechanisms for the process
-    // Example: create a pipe
-    int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        handleSyscallError("Failed to create pipe");
+void ProcessManager::terminateProcess(pid_t pid) {
+    if (kill(pid, SIGTERM) == -1) {
+        handleSyscallError("Failed to terminate process");
     }
 }
 
-void processCLI() {
-    std::string command;
-    while (std::getline(std::cin, command)) {
-        // Parse and execute commands
-        if (command == "list") {
-            // List processes
-        } else if (command == "terminate") {
-            // Terminate a process
-        }
-    }
-}
-
-void loadConfiguration(const std::string& configFile) {
-    std::ifstream file(configFile);
-    if (file.is_open()) {
-        std::string line;
-        while (std::getline(file, line)) {
-            // Parse and apply configuration settings
-        }
-    }
-}
-
-// Process Information Structure
-struct ProcessInfo {
-    pid_t pid;
-    int priority;
-    std::thread workerThread;
-    bool isThread;
-    bool isPaused;
-};
-
-// Process Manager Class
-class ProcessManager {
-public:
-    // Singleton pattern for global access
-    static ProcessManager& instance() {
-        static ProcessManager instance;
-        return instance;
-    }
-
-    // Add a new process
-    pid_t addProcess(std::function<void()> func, int priority = 0) {
-        pid_t pid = fork();
-        if (pid == -1) {
-            handleSyscallError("Failed to create process");
-        } else if (pid == 0) {
-            // Child process
-            func();
-            exit(EXIT_SUCCESS);
-        }
-
-        // Parent process: add process info to the list
-        {
-            std::lock_guard<std::mutex> lock(m_processMutex);
-            m_processInfos.push_back({pid, priority, std::thread(), false, false});
-        }
-        return pid;
-    }
-
-    // Add a new multithreaded process
-    void addThreadProcess(std::function<void()> func, int priority = 0) {
-        std::lock_guard<std::mutex> lock(m_processMutex);
-        std::thread t(func);
-        m_processInfos.push_back({0, priority, std::move(t), true, false});
-    }
-
-    // Wait for all processes and threads to finish
-    void waitForAll() {
-        std::unique_lock<std::mutex> lock(m_processMutex);
-        m_cv.wait(lock, [this] { return m_processInfos.empty(); });
-    }
-
-    // Terminate all processes
-    void terminateAll() {
-        std::lock_guard<std::mutex> lock(m_processMutex);
-        for (auto& process : m_processInfos) {
-            if (!process.isThread) {
-                terminateProcess(process.pid);
-            } else if (process.workerThread.joinable()) {
-                process.workerThread.join();
-            }
-        }
-        m_processInfos.clear();
-    }
-
-    // Set signal handler
-    void setSignalHandler(int signal, void (*handler)(int)) {
-        struct sigaction sa;
-        sa.sa_handler = handler;
-        sigemptyset(&sa.sa_mask);
-        sa.sa_flags = 0;
-        if (sigaction(signal, &sa, nullptr) == -1) {
-            handleSyscallError("Failed to set signal handler");
-        }
-    }
-
-    // Create a process group
-    void createProcessGroup(pid_t pid) {
-        if (setpgid(pid, pid) == -1) {
-            handleSyscallError("Failed to create process group");
-        }
-    }
-
-    // Join an existing process group
-    void joinProcessGroup(pid_t pid) {
-        if (setpgid(getpid(), pid) == -1) {
-            handleSyscallError("Failed to join process group");
-        }
-    }
-
-    // Pause a process
-    void pauseProcess(pid_t pid) {
-        std::lock_guard<std::mutex> lock(m_processMutex);
-        for (auto& process : m_processInfos) {
-            if (process.pid == pid && !process.isPaused) {
-                if (kill(pid, SIGSTOP) == -1) {
-                    handleSyscallError("Failed to pause process");
-                }
-                process.isPaused = true;
-                break;
-            }
-        }
-    }
-
-    // Resume a paused process
-    void resumeProcess(pid_t pid) {
-        std::lock_guard<std::mutex> lock(m_processMutex);
-        for (auto& process : m_processInfos) {
-            if (process.pid == pid && process.isPaused) {
-                if (kill(pid, SIGCONT) == -1) {
-                    handleSyscallError("Failed to resume process");
-                }
-                process.isPaused = false;
-                break;
-            }
-        }
-    }
-
-    // Adjust the priority of a process
-    void setProcessPriority(pid_t pid, int priority) {
-        std::lock_guard<std::mutex> lock(m_processMutex);
-        for (auto& process : m_processInfos) {
-            if (process.pid == pid) {
-                process.priority = priority;
-                // Adjust the priority in the system
-                if (setpriority(PRIO_PROCESS, pid, priority) == -1) {
-                    handleSyscallError("Failed to set process priority");
-                }
-                break;
-            }
-        }
-    }
-
-    // Reap zombie processes
-    void reapZombies() {
-        std::lock_guard<std::mutex> lock(m_processMutex);
-        for (auto it = m_processInfos.begin(); it != m_processInfos.end();) {
-            if (!it->isThread && checkProcessStatus(it->pid) == -1) {
-                it = m_processInfos.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    }
-
-private:
-    // Constructor
-    ProcessManager() = default;
-
-    // Destructor
-    ~ProcessManager() {
-        terminateAll();
-    }
-
-    // Disable copy/move constructors and assignment
-    ProcessManager(const ProcessManager&) = delete;
-    ProcessManager& operator=(const ProcessManager&) = delete;
-    ProcessManager(ProcessManager&&) = delete;
-    ProcessManager& operator=(ProcessManager&&) = delete;
-
-    // Utility function to handle errors in syscalls
-    void handleSyscallError(const char* message) {
-        perror(message);
-        throw std::runtime_error(message);
-    }
-
-    // Terminate a process by sending SIGTERM
-    void terminateProcess(pid_t pid) {
-        if (kill(pid, SIGTERM) == -1) {
-            handleSyscallError("Failed to terminate process");
-        }
-    }
-
-    // Wait for a specific process to finish
-    int waitForProcess(pid_t pid) {
-        int status;
-        if (waitpid(pid, &status, 0) == -1) {
-            handleSyscallError("Failed to wait for process");
-        }
-        return status;
-    }
-
-    // Check the status of a process without blocking
-    int checkProcessStatus(pid_t pid) {
-        int status;
-        if (waitpid(pid, &status, WNOHANG) == -1) {
-            handleSyscallError("Failed to check process status");
-        }
-        return status;
-    }
-
-    std::vector<ProcessInfo> m_processInfos;
-    std::mutex m_processMutex;
-    std::condition_variable m_cv;
-};
-
-// Example usage of ProcessManager
-int main()
-{
+// Example usage
+int main() {
     try {
-        // Example process creation
         ProcessManager& pm = ProcessManager::instance();
 
-        // Add a process
+        // Example process creation
         pm.addProcess([] {
             std::cout << "Process 1 running\n";
-            sleep(2); // Simulate work
+            sleep(2);
             std::cout << "Process 1 finished\n";
         });
 
-        // Add another process with priority
         pm.addProcess([] {
             std::cout << "Process 2 running\n";
-            sleep(3); // Simulate work
+            sleep(3);
             std::cout << "Process 2 finished\n";
         });
 
-        // Add a multithreaded process
         pm.addThreadProcess([] {
-            std::cout << "Thread Process running\n";
-            std::this_thread::sleep_for(std::chrono::seconds(1)); // Simulate work
-            std::cout << "Thread Process finished\n";
+            std::cout << "Thread process running\n";
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            std::cout << "Thread process finished\n";
         });
 
-        // Pause a process (example usage)
-        pm.pauseProcess(1234); // Replace 1234 with actual PID
-        // Resume a process (example usage)
-        pm.resumeProcess(1234); // Replace 1234 with actual PID
-
-        // Wait for all processes and threads to finish
         pm.waitForAll();
-        std::cout << "All processes and threads completed\n";
+        std::cout << "All processes completed\n";
     } catch (const std::exception& e) {
-        std::cerr << "Exception: " << e.what() << '\n';
+        std::cerr << "Error: " << e.what() << '\n';
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;
