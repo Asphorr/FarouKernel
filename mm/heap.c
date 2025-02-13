@@ -1,105 +1,95 @@
-#include "heap.h"
+#include <iostream>
+#include <string>
+#include <utility>
+#include <vector>
+#include <queue>
+#include <stack>
+#include <unordered_map>
+#include <memory>
 
-typedef struct heap_node_s {
-    void* data;
-    int priority;
-} heap_node_t;
+using namespace std;
 
-typedef struct heap_s {
-    size_t size;
-    size_t capacity;
-    heap_node_t** nodes;
-} heap_t;
+template <typename T>
+struct Node {
+    T data;
+    unique_ptr<Node<T>> left;
+    unique_ptr<Node<T>> right;
+};
 
-heap_t* heap_create(size_t capacity) {
-    heap_t* heap = malloc(sizeof(heap_t));
-    heap->nodes = calloc(capacity, sizeof(heap_node_t*));
-    heap->size = 0;
-    heap->capacity = capacity;
-    return heap;
-}
-
-void heap_destroy(heap_t* heap) {
-    free(heap->nodes);
-    free(heap);
-}
-
-int heap_empty(const heap_t* heap) {
-    return !heap || !heap->size;
-}
-
-void heap_push(heap_t* heap, void* data, int priority) {
-    if (!heap || heap->size == heap->capacity) {
-        return;
-    }
-    
-    // Insert at end of array
-    heap->nodes[heap->size++] = &((heap_node_t){data, priority});
-    
-    // Bubble up
-    size_t index = heap->size - 1;
-    while (index && heap->nodes[index]->priority > heap->nodes[(index - 1) / 2]->priority) {
-        heap_swap(heap, index, (index - 1) / 2);
-        index = (index - 1) / 2;
-    }
-}
-
-void heap_pop(heap_t* heap) {
-    if (!heap || heap->size == 0) {
-        return;
-    }
-    
-    // Remove last node
-    heap->size--;
-    heap->nodes[heap->size] = NULL;
-    
-    // Bubble down
-    size_t index = 0;
-    while ((index * 2) + 1 < heap->size) {
-        size_t child = (index * 2) + 1;
-        if (child + 1 < heap->size && heap->nodes[child + 1]->priority > heap->nodes[child]->priority) {
-            child++;
+template <typename T>
+void printTree(unique_ptr<Node<T>> root) {
+    queue<unique_ptr<Node<T>>> q;
+    q.emplace(root);
+    while (!q.empty()) {
+        auto node = q.front();
+        cout << node->data << " ";
+        if (node->left != nullptr) {
+            q.emplace(node->left);
         }
-        
-        if (heap->nodes[index]->priority > heap->nodes[child]->priority) {
-            heap_swap(heap, index, child);
-            index = child;
+        if (node->right != nullptr) {
+            q.emplace(node->right);
+        }
+        q.pop();
+    }
+    cout << endl;
+}
+
+template <typename T>
+bool containsDuplicates(unique_ptr<Node<T>> root) {
+    stack<unique_ptr<Node<T>>> s;
+    s.emplace(root);
+    unordered_map<T, bool> seen;
+    while (!s.empty()) {
+        auto node = s.top();
+        if (seen.find(node->data) == seen.end()) {
+            seen[node->data] = true;
+            if (node->left != nullptr && !containsDuplicates(node->left)) {
+                return false;
+            }
+            if (node->right != nullptr && !containsDuplicates(node->right)) {
+                return false;
+            }
         } else {
-            break;
+            return true;
         }
+        s.pop();
+    }
+    return false;
+}
+
+template <typename T>
+void addToQueue(unique_ptr<Node<T>> root, queue<unique_ptr<Node<T>>>& q) {
+    if (root != nullptr) {
+        q.emplace(root);
+        addToQueue(root->left, q);
+        addToQueue(root->right, q);
     }
 }
 
-void heap_swap(heap_t* heap, size_t index1, size_t index2) {
-    heap_node_t* tmp = heap->nodes[index1];
-    heap->nodes[index1] = heap->nodes[index2];
-    heap->nodes[index2] = tmp;
+template <typename T>
+void levelOrderTraversal(unique_ptr<Node<T>> root) {
+    queue<unique_ptr<Node<T>>> q;
+    addToQueue(root, q);
+    while (!q.empty()) {
+        auto node = q.front();
+        cout << node->data << " ";
+        q.pop();
+    }
+    cout << endl;
 }
 
-void heap_sort(heap_t* heap) {
-    size_t i, j, n = heap->size;
-    for (i = n / 2 - 1; i >= 0; i--) {
-        heap_sift_down(heap, i, n);
-    }
-    for (i = n - 1; i > 0; i--) {
-        heap_swap(heap, 0, i);
-        heap_sift_down(heap, 0, i);
-    }
-}
+int main() {
+    unique_ptr<Node<int>> root = make_unique<Node<int>>(1);
+    root->left = make_unique<Node<int>>(2);
+    root->right = make_unique<Node<int>>(3);
+    root->left->left = make_unique<Node<int>>(4);
+    root->left->right = make_unique<Node<int>>(5);
+    root->right->left = make_unique<Node<int>>(6);
+    root->right->right = make_unique<Node<int>>(7);
 
-void heap_sift_down(heap_t* heap, size_t start, size_t end) {
-    size_t root = start;
-    while ((root * 2) + 1 <= end) {
-        size_t child = (root * 2) + 1;
-        if (child + 1 <= end && heap->nodes[child + 1]->priority > heap->nodes[child]->priority) {
-            child++;
-        }
-        
-        if (heap->nodes[root]->priority > heap->nodes[child]->priority) {
-            heap_swap(heap, root, child);
-            root = child;
-        } else {
-            break;
-        }
-    }
+    printTree(root);
+    cout << "Contains duplicates? " << containsDuplicates(root) << endl;
+    levelOrderTraversal(root);
+
+    return 0;
 }
