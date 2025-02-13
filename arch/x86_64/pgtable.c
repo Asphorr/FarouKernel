@@ -1,76 +1,81 @@
+// pgtable.c
 #include "pgtable.h"
+#include <string.h>
 
-/* Global variables */
-struct gdt_entry gdt[GDT_ENTRIES];
-struct gdt_ptr gp;
-struct tss_entry tss;
-struct idt_entry idt[IDT_ENTRIES];
-struct idt_ptr idtp;
+static gdt_entry gdt[GDT_ENTRIES];
+static tss_entry tss;
+static idt_entry idt[IDT_ENTRIES];
 
-/* Set a GDT gate */
-void gdt_set_gate(int num, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran) {
-    gdt[num].base_low = base & 0xFFFF;
-    gdt[num].base_middle = (base >> 16) & 0xFF;
-    gdt[num].base_high = (base >> 24) & 0xFF;
-
-    gdt[num].limit_low = limit & 0xFFFF;
-    gdt[num].granularity = ((limit >> 16) & 0x0F) | (gran & 0xF0);
-    gdt[num].access = access;
+static void gdt_load(const gdt_ptr* ptr) {
+    __asm__ volatile("lgdt %0" : : "m"(*ptr));
 }
 
-/* Set a TSS gate */
-void tss_set_gate(int num, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran) {
-    gdt[num].base_low = base & 0xFFFF;
-    gdt[num].base_middle = (base >> 16) & 0xFF;
-    gdt[num].base_high = (base >> 24) & 0xFF;
-
-    gdt[num].limit_low = limit & 0xFFFF;
-    gdt[num].granularity = ((limit >> 16) & 0x0F) | (gran & 0xF0);
-    gdt[num].access = access;
+static void tss_load(uint16_t sel) {
+    __asm__ volatile("ltr %0" : : "r"(sel));
 }
 
-/* Set an IDT gate */
-void idt_set_gate(uint8_t num, uint64_t base, uint16_t sel, uint8_t flags) {
-    idt[num].base_low = base & 0xFFFF;
-    idt[num].base_high = (base >> 16) & 0xFFFF;
-    idt[num].selector = sel;
-    idt[num].always0 = 0;
-    idt[num].flags = flags;
+static void idt_load(const idt_ptr* ptr) {
+    __asm__ volatile("lidt %0" : : "m"(*ptr));
 }
 
-/* Setup the GDT */
-void setup_gdt() {
-    gp.limit = (sizeof(struct gdt_entry) * GDT_ENTRIES) - 1;
-    gp.base = (uint64_t)&gdt;
+void gdt_init(void) {
+    gdt_ptr gp = {
+        .limit = sizeof(gdt) - 1,
+        .base = (uintptr_t)&gdt
+    };
 
-    gdt_set_gate(0, 0, 0, 0, 0);                  /* Null segment */
-    gdt_set_gate(1, 0, 0xFFFFFFFF, 0x9A, 0xCF);  /* Code segment */
-    gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0xCF);  /* Data segment */
-    gdt_set_gate(3, (uint32_t)&tss, sizeof(tss) - 1, 0x89, 0x40); /* TSS */
+    // Null descriptor
+    gdt[0] = (gdt_entry){0};
 
-    gdt_flush((uint64_t)&gp);
-    tss_flush();
+    // Kernel code (64-bit)
+    gdt[1] = (gdt_entry){
+        .access = 0x9A,
+        .flags = 0xA
+    };
+
+    // Kernel data
+    gdt[2] = (gdt_entry){
+        .access = 0x92
+    };
+
+    // User code
+    gdt[3] = (gdt_entry){
+        .access = 0xFA,
+        .flags = 0xA
+    };
+
+    // User data
+    gdt[4] = (gdt_entry){
+        .access = 0xF2
+    };
+
+    gdt_load(&gp);
 }
 
-/* Setup the IDT */
-void setup_idt() {
-    idtp.limit = IDT_ENTRIES * sizeof(struct idt_entry) - 1;
-    idtp.base = (uint64_t)&idt;
+void idt_init(void) {
+    idt_ptr idtp = {
+        .limit = sizeof(idt) - 1,
+        .base = (uintptr_t)&idt
+    };
 
-    /* Clear out the entire IDT */
-    memset(&idt, 0, sizeof(struct idt_entry) * IDT_ENTRIES);
-
-    /* Add any new ISRs to the IDT here using idt_set_gate */
-
-    idt_flush((uint64_t)&idtp);
+    memset(idt, 0, sizeof(idt));
+    idt_load(&idtp);
 }
 
-/* Setup the TSS */
-void setup_tss(uint32_t kernel_stack) {
+void tss_init(uintptr_t stack_top) {
     memset(&tss, 0, sizeof(tss));
-    tss.esp0 = kernel_stack;
-    tss.ss0 = 0x10;  /* Kernel data segment */
+    tss.rsp[0] = stack_top;
+    tss.iomap_base = sizeof(tss);
 
-    /* Set TSS gate in GDT */
-    tss_set_gate(3, (uint32_t)&tss, sizeof(tss) - 1, 0x89, 0x40);
+    gdt[GDT_ENTRIES-1] = (gdt_entry){
+        .limit_low = sizeof(tss),
+        .base_low = (uintptr_t)&tss,
+        .base_mid = ((uintptr_t)&tss >> 16),
+        .access = 0x89,
+        .limit_high = 0,
+        .flags = 0,
+        .base_high = ((uintptr_t)&tss >> 24)
+    };
+
+    tss_load((GDT_ENTRIES-1) << 3);
 }
