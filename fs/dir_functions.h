@@ -1,35 +1,27 @@
-#ifndef DIR_FUNCTIONS_H
-#define DIR_FUNCTIONS_H
+// dir_functions.h
+#pragma once
 
-#include <string>
-#include <vector>
+#include <chrono>
 #include <filesystem>
-#include <fstream>
+#include <optional>
+#include <string>
 #include <stdexcept>
+#include <system_error>
 
 namespace fs = std::filesystem;
 
 namespace DirFunctions {
 
-void CreateDirectoryAndWriteToFile(const std::string& dirPath, 
-                                   const std::vector<std::string>& data, 
-                                   fs::perms perms = fs::perms::all);
+class Error : public std::runtime_error {
+public:
+    using runtime_error::runtime_error;
+};
 
-void DeleteDirectory(const std::string& dirPath, bool deleteNonEmpty = false);
-
-void CopyDirectory(const std::string& sourcePath, 
-                   const std::string& destinationPath, 
-                   bool copySelf = false);
-
-std::vector<std::string> GetAllFilesInDir(const std::string& dirPath, 
-                                          bool fullPath = false);
-
-bool IsDirectoryEmpty(const std::string& dirPath);
-
-bool DoesFileExist(const std::string& filePath);
-
-std::string ReadFromFile(const std::string& filePath);
+[[nodiscard]] fs::path moveFile(const fs::path& source, const fs::path& destination);
+[[nodiscard]] fs::path moveDirectory(const fs::path& source, const fs::path& destination);
+[[nodiscard]] std::optional<uintmax_t> getFileSize(const fs::path& path) noexcept;
+[[nodiscard]] std::optional<uintmax_t> getDirectorySize(const fs::path& path);
+[[nodiscard]] std::optional<std::chrono::system_clock::time_point> getLastWriteTime(const fs::path& path) noexcept;
+bool setLastWriteTime(const fs::path& path, std::chrono::system_clock::time_point newTime);
 
 } // namespace DirFunctions
-
-#endif // DIR_FUNCTIONS_H
