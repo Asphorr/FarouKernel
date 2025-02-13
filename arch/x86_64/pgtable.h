@@ -1,81 +1,54 @@
-#ifndef PGTABLE_H
-#define PGTABLE_H
-
+// pgtable.h
+#pragma once
 #include <stdint.h>
-#include <string.h>
+#include <stddef.h>
 
 #define GDT_ENTRIES 5
 #define IDT_ENTRIES 256
+#define TSS_IOB_SIZE 0
 
-/* GDT entry structure */
-struct gdt_entry {
+#pragma pack(push, 1)
+
+typedef struct {
     uint16_t limit_low;
     uint16_t base_low;
-    uint8_t base_middle;
+    uint8_t base_mid;
     uint8_t access;
-    uint8_t granularity;
+    uint8_t limit_high : 4;
+    uint8_t flags : 4;
     uint8_t base_high;
-} __attribute__((packed));
+} gdt_entry;
 
-/* TSS (Task State Segment) structure for task switching */
-struct tss_entry {
-    uint32_t prev_tss;
-    uint32_t esp0;
-    uint32_t ss0;
-    uint32_t esp1;
-    uint32_t ss1;
-    uint32_t esp2;
-    uint32_t ss2;
-    uint32_t cr3;
-    uint32_t eip;
-    uint32_t eflags;
-    uint32_t eax, ecx, edx, ebx;
-    uint32_t esp, ebp, esi, edi;
-    uint32_t es, cs, ss, ds, fs, gs;
-    uint32_t ldt;
-    uint16_t trap;
-    uint16_t iomap_base;
-} __attribute__((packed));
+typedef struct {
+    uint32_t reserved;
+    uint64_t rsp[3];
+    uint64_t ist[7];
+    uint32_t iomap_base;
+} tss_entry;
 
-/* IDT entry structure */
-struct idt_entry {
+typedef struct {
+    uint16_t limit;
+    uint64_t base;
+} gdt_ptr;
+
+typedef struct {
     uint16_t base_low;
-    uint16_t selector;
-    uint8_t always0;
-    uint8_t flags;
-    uint16_t base_high;
-} __attribute__((packed));
+    uint16_t cs;
+    uint8_t ist : 3;
+    uint8_t reserved0 : 5;
+    uint8_t attributes;
+    uint16_t base_mid;
+    uint32_t base_high;
+    uint32_t reserved1;
+} idt_entry;
 
-/* GDT pointer structure */
-struct gdt_ptr {
+typedef struct {
     uint16_t limit;
     uint64_t base;
-} __attribute__((packed));
+} idt_ptr;
 
-/* IDT pointer structure */
-struct idt_ptr {
-    uint16_t limit;
-    uint64_t base;
-} __attribute__((packed));
+#pragma pack(pop)
 
-/* Global variable declarations */
-extern struct gdt_entry gdt[GDT_ENTRIES];
-extern struct gdt_ptr gp;
-extern struct tss_entry tss;
-extern struct idt_entry idt[IDT_ENTRIES];
-extern struct idt_ptr idtp;
-
-/* Assembly functions */
-extern void gdt_flush(uint64_t);
-extern void idt_flush(uint64_t);
-extern void tss_flush();
-
-/* Function declarations */
-void gdt_set_gate(int num, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran);
-void tss_set_gate(int num, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran);
-void idt_set_gate(uint8_t num, uint64_t base, uint16_t sel, uint8_t flags);
-void setup_gdt();
-void setup_idt();
-void setup_tss(uint32_t kernel_stack);
-
-#endif /* PGTABLE_H */
+void gdt_init(void);
+void idt_init(void);
+void tss_init(uintptr_t stack_top);
