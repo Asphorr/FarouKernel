@@ -9,6 +9,7 @@
 #include <sstream>
 #include <vector>
 #include <memory>
+#include <chrono>  // Added for timing
 
 #include <tbb/parallel_for_each.h>
 #include <tbb/concurrent_unordered_map.h>
@@ -19,16 +20,16 @@
 
 namespace {
     using DataMap = tbb::concurrent_unordered_map<std::string, int>;
-    
+
     // Custom exceptions for better error handling
     class ConfigError : public std::runtime_error {
         using std::runtime_error::runtime_error;
     };
-    
+
     class FileError : public std::runtime_error {
         using std::runtime_error::runtime_error;
     };
-    
+
     class DataError : public std::runtime_error {
         using std::runtime_error::runtime_error;
     };
@@ -41,7 +42,6 @@ public:
     int reserveSize;
     bool useParallelProcessing;
 
-    // Validation method
     void validate() const {
         if (inputFile.empty()) {
             throw ConfigError("Input file path cannot be empty");
@@ -105,15 +105,14 @@ private:
             if (line.empty() || line[0] == '#') {
                 continue;  // Skip empty lines and comments
             }
-            
             processLine(line, lineNum, rawData);
         }
 
         return createDataMap(rawData);
     }
 
-    static void processLine(const std::string& line, size_t lineNum, 
-                          std::vector<std::pair<std::string, int>>& rawData) {
+    static void processLine(const std::string& line, size_t lineNum,
+                           std::vector<std::pair<std::string, int>>& rawData) {
         std::istringstream iss(line);
         std::string key;
         int value;
@@ -122,7 +121,6 @@ private:
             throw DataError("Invalid data format at line " + std::to_string(lineNum));
         }
 
-        // Additional validation
         if (key.empty()) {
             throw DataError("Empty key at line " + std::to_string(lineNum));
         }
@@ -148,13 +146,12 @@ private:
     }
 
     void processData(DataMap& data) const {
-        auto processFunc = [](std::string& key, int& value) {
+        // Simplified processFunc to only modify the value
+        auto processFunc = [](int& value) {
             if (value > 10) {
                 value *= 2;
-                key += "_doubled";
             } else {
                 value /= 2;
-                key += "_halved";
             }
         };
 
@@ -165,24 +162,18 @@ private:
         }
     }
 
-    static void processDataParallel(DataMap& data, 
-                                  const std::function<void(std::string&, int&)>& processFunc) {
+    static void processDataParallel(DataMap& data,
+                                   const std::function<void(int&)>& processFunc) {
         tbb::parallel_for_each(data.begin(), data.end(),
             [&processFunc](auto& pair) {
-                auto key = pair.first;  // Make a copy
-                auto value = pair.second;
-                processFunc(key, value);
-                pair.second = value;  // Update only the value to avoid race conditions
+                processFunc(pair.second);  // Directly modify the value
             });
     }
 
     static void processDataSequential(DataMap& data,
-                                    const std::function<void(std::string&, int&)>& processFunc) {
+                                     const std::function<void(int&)>& processFunc) {
         for (auto& pair : data) {
-            auto key = pair.first;  // Make a copy
-            auto value = pair.second;
-            processFunc(key, value);
-            pair.second = value;
+            processFunc(pair.second);  // Directly modify the value
         }
     }
 
@@ -196,7 +187,7 @@ private:
         }
 
         output.exceptions(std::ofstream::badbit | std::ofstream::failbit);
-        
+
         try {
             for (const auto& [key, value] : data) {
                 output << key << ": " << value << '\n';
@@ -219,7 +210,7 @@ Config loadConfig(const std::string& configFile) {
         config.outputFile = toml::find<std::string>(data, "output_file");
         config.reserveSize = toml::find<int>(data, "reserve_size");
         config.useParallelProcessing = toml::find<bool>(data, "use_parallel_processing");
-        
+
         config.validate();
         return config;
     } catch (const toml::exception& e) {
@@ -243,10 +234,16 @@ int main(int argc, char* argv[]) {
 
         const auto configFile = result["config"].as<std::string>();
         const auto config = loadConfig(configFile);
-        
+
         DataProcessor processor(config);
+
+        // Measure and log processing time
+        auto start = std::chrono::high_resolution_clock::now();
         processor.process();
-        
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        spdlog::info("Processing took {} ms", duration);
+
         return 0;
     } catch (const ConfigError& e) {
         spdlog::error("Configuration error: {}", e.what());
