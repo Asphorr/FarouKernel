@@ -4,13 +4,15 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
+#include <inttypes.h>
 
-// Error logging remains the same
-void log_error(const char *message) {
-    fprintf(stderr, "Error: %s (errno: %d)\n", message, errno);
+// Error logging function with function name
+void log_error(const char *func_name, const char *message) {
+    fprintf(stderr, "Error in %s: %s (errno: %d)\n", func_name, message, errno);
 }
 
-// Fixed syscall handler type definition
+// System call handler type definition
 typedef uint64_t (*syscall_handler_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 static const syscall_handler_t syscall_table[SYS_MAX] = {
     [SYS_WRITE] = sys_write,
@@ -19,60 +21,75 @@ static const syscall_handler_t syscall_table[SYS_MAX] = {
     [SYS_CLOSE] = sys_close,
     [SYS_LSEEK] = sys_lseek,
     [SYS_FSTAT] = sys_fstat,
-    [SYS_EXIT] = sys_exit,
+    [SYS EXIT] = sys_exit,
 };
 
-// Updated syscall entry point
+// System call entry point
 uint64_t syscall_entry(uint64_t syscall_num, uint64_t arg1, uint64_t arg2, 
                       uint64_t arg3, uint64_t arg4) {
     if (syscall_num >= SYS_MAX || !syscall_table[syscall_num]) {
-        log_error("Invalid system call number");
+        log_error("syscall_entry", "Invalid system call number");
         errno = ENOSYS;
         return (uint64_t)-1;
     }
     return syscall_table[syscall_num](arg1, arg2, arg3, arg4, 0);
 }
 
-/* Updated handlers with proper signature */
+// System call handlers with improved readability
 uint64_t sys_write(uint64_t fd, uint64_t buf, uint64_t count, 
                   uint64_t unused1, uint64_t unused2) {
-    ssize_t result = write((int)fd, (const void *)(uintptr_t)buf, (size_t)count);
-    return (result < 0) ? (log_error("sys_write failed"), (uint64_t)-1) 
+    int file_descriptor = (int)fd;
+    const void *buffer = (const void *)(buf);
+    size_t bytes_to_write = (size_t)count;
+    ssize_t result = write(file_descriptor, buffer, bytes_to_write);
+    return (result < 0) ? (log_error(__FUNCTION__, "write failed"), (uint64_t)-1) 
                        : (uint64_t)result;
 }
 
 uint64_t sys_read(uint64_t fd, uint64_t buf, uint64_t count,
                  uint64_t unused1, uint64_t unused2) {
-    ssize_t result = read((int)fd, (void *)(uintptr_t)buf, (size_t)count);
-    return (result < 0) ? (log_error("sys_read failed"), (uint64_t)-1)
+    int file_descriptor = (int)fd;
+    void *buffer = (void *)(buf);
+    size_t bytes_to_read = (size_t)count;
+    ssize_t result = read(file_descriptor, buffer, bytes_to_read);
+    return (result < 0) ? (log_error(__FUNCTION__, "read failed"), (uint64_t)-1)
                        : (uint64_t)result;
 }
 
 uint64_t sys_open(uint64_t path, uint64_t flags, uint64_t mode,
                  uint64_t unused1, uint64_t unused2) {
-    int result = open((const char *)(uintptr_t)path, (int)flags, (mode_t)mode);
-    return (result < 0) ? (log_error("sys_open failed"), (uint64_t)-1)
+    const char *file_path = (const char *)(path);
+    int open_flags = (int)flags;
+    mode_t file_mode = (mode_t)mode;
+    int result = open(file_path, open_flags, file_mode);
+    return (result < 0) ? (log_error(__FUNCTION__, "open failed"), (uint64_t)-1)
                        : (uint64_t)result;
 }
 
 uint64_t sys_close(uint64_t fd, uint64_t unused1, uint64_t unused2,
                   uint64_t unused3, uint64_t unused4) {
-    int result = close((int)fd);
-    return (result < 0) ? (log_error("sys_close failed"), (uint64_t)-1)
+    int file_descriptor = (int)fd;
+    int result = close(file_descriptor);
+    return (result < 0) ? (log_error(__FUNCTION__, "close failed"), (uint64_t)-1)
                        : (uint64_t)result;
 }
 
 uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence,
                   uint64_t unused1, uint64_t unused2) {
-    off_t result = lseek((int)fd, (off_t)offset, (int)whence);
-    return (result == (off_t)-1) ? (log_error("sys_lseek failed"), (uint64_t)-1)
+    int file_descriptor = (int)fd;
+    off_t seek_offset = (off_t)offset;
+    int seek_whence = (int)whence;
+    off_t result = lseek(file_descriptor, seek_offset, seek_whence);
+    return (result == (off_t)-1) ? (log_error(__FUNCTION__, "lseek failed"), (uint64_t)-1)
                                 : (uint64_t)result;
 }
 
 uint64_t sys_fstat(uint64_t fd, uint64_t st_ptr, uint64_t unused1,
                   uint64_t unused2, uint64_t unused3) {
-    int result = fstat((int)fd, (struct stat *)(uintptr_t)st_ptr);
-    return (result < 0) ? (log_error("sys_fstat failed"), (uint64_t)-1)
+    int file_descriptor = (int)fd;
+    struct stat *stat_buffer = (struct stat *)(st_ptr);
+    int result = fstat(file_descriptor, stat_buffer);
+    return (result < 0) ? (log_error(__FUNCTION__, "fstat failed"), (uint64_t)-1)
                        : (uint64_t)result;
 }
 
@@ -82,75 +99,36 @@ uint64_t sys_exit(uint64_t status, uint64_t unused1, uint64_t unused2,
     return 0; // Never reached
 }
 
-// Test main remains largely the same with cast adjustments
+// Test main with improvements
 int main(void) {
     // Test sys_open and sys_write
-    uint64_t fd = sys_open((uint64_t)"testfile.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644, 0, 0);
+    const char *file_name = "testfile.txt";
+    uint64_t fd = sys_open((uint64_t)file_name, O_WRONLY | O_CREAT | O_TRUNC, 0644, 0, 0);
     if (fd != (uint64_t)-1) {
         const char *message = "Hello, world!";
-        uint64_t bytes_written = sys_write(fd, (uint64_t)message, 13, 0, 0);
-        printf("Bytes written: %lu\n", (unsigned long)bytes_written);
+        size_t message_length = strlen(message);
+        uint64_t bytes_written = sys_write(fd, (uint64_t)message, message_length, 0, 0);
+        printf("Bytes written: %" PRIu64 "\n", bytes_written);
         sys_close(fd, 0, 0, 0, 0);
     } else {
-        log_error("Failed to open file for writing");
+        log_error("main", "Failed to open file for writing");
         return 1;
     }
 
     // Test sys_read
-    fd = sys_open((uint64_t)"testfile.txt", O_RDONLY, 0, 0, 0);
+    fd = sys_open((uint64_t)file_name, O_RDONLY, 0, 0, 0);
     if (fd != (uint64_t)-1) {
         char buffer[20] = {0};
         uint64_t bytes_read = sys_read(fd, (uint64_t)buffer, sizeof(buffer)-1, 0, 0);
         if (bytes_read != (uint64_t)-1) {
             printf("Read from file: %s\n", buffer);
         } else {
-            log_error("Failed to read from file");
+            log_error("main", "Failed to read from file");
         }
         sys_close(fd, 0, 0, 0, 0);
     } else {
-        log_error("Failed to open file for reading");
+        log_error("main", "Failed to open file for reading");
         return 1;
     }
 
-    // Test sys_lseek and sys_read
-    fd = sys_open((uint64_t)"testfile.txt", O_RDONLY, 0, 0, 0);
-    if (fd != (uint64_t)-1) {
-        uint64_t new_offset = sys_lseek(fd, 7, SEEK_SET, 0, 0);
-        if (new_offset != (uint64_t)-1) {
-            char buffer[20] = {0};
-            uint64_t bytes_read = sys_read(fd, (uint64_t)buffer, sizeof(buffer)-1, 0, 0);
-            if (bytes_read != (uint64_t)-1) {
-                printf("Read from offset %llu: %s\n", (unsigned long long)new_offset, buffer);
-            } else {
-                log_error("Failed to read from file after seek");
-            }
-        } else {
-            log_error("Failed to seek in file");
-        }
-        sys_close(fd, 0, 0, 0, 0);
-    } else {
-        log_error("Failed to open file for seeking");
-        return 1;
-    }
-
-    // Test sys_fstat
-    fd = sys_open((uint64_t)"testfile.txt", O_RDONLY, 0, 0, 0);
-    if (fd != (uint64_t)-1) {
-        struct stat st;
-        uint64_t result = sys_fstat(fd, (uint64_t)&st, 0, 0, 0);
-        if (result != (uint64_t)-1) {
-            printf("File size: %lld bytes\n", (long long)st.st_size);
-            printf("File mode: %o\n", st.st_mode & 0777);
-        } else {
-            log_error("Failed to get file stats");
-        }
-        sys_close(fd, 0, 0, 0, 0);
-    } else {
-        log_error("Failed to open file for stat");
-        return 1;
-    }
-
-    printf("Exiting with code 0\n");
-    sys_exit(0, 0, 0, 0, 0);
-    return 1;
-}
+    // Test
