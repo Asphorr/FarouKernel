@@ -60,7 +60,7 @@ public:
 
             tasks.emplace([task] { (*task)(); });
         }
-        cv.notify_one();
+        cv.notify_all(); // 改为 notify_all 以更高效唤醒线程
         return res;
     }
 
@@ -91,6 +91,8 @@ public:
 
 private:
     void worker_main(std::stop_token st) noexcept {
+        std::vector<std::exception_ptr> local_exceptions; // 本地异常列表
+
         while (true) {
             std::optional<std::function<void()>> task;
             {
@@ -98,6 +100,11 @@ private:
                 cv.wait(lock, [&] { return !tasks.empty() || st.stop_requested(); });
 
                 if (st.stop_requested() && tasks.empty()) {
+                    // 将本地异常合并到全局列表
+                    if (!local_exceptions.empty()) {
+                        std::lock_guard e_lock(eptr_mutex);
+                        exceptions.insert(exceptions.end(), local_exceptions.begin(), local_exceptions.end());
+                    }
                     return;
                 }
 
@@ -113,8 +120,13 @@ private:
             try {
                 (*task)();
             } catch (...) {
-                std::lock_guard lock(eptr_mutex);
-                exceptions.push_back(std::current_exception());
+                local_exceptions.push_back(std::current_exception());
+                // 批量合并异常，减少锁竞争
+                if (local_exceptions.size() >= 10) {
+                    std::lock_guard e_lock(eptr_mutex);
+                    exceptions.insert(exceptions.end(), local_exceptions.begin(), local_exceptions.end());
+                    local_exceptions.clear();
+                }
             }
 
             {
