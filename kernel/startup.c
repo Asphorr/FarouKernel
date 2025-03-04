@@ -1,147 +1,109 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <fcntl.h>
+#include <stdint.h>
 #include <sys/mman.h>
-#include <sys/types.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <elf.h>
-#include <errno.h>
 
-#define STACK_SIZE 0x1000
-#define HEAP_SIZE 0x1000
-#define PF_R 0x1
-#define PF_W 0x2
-#define PF_X 0x4
+// Inline error handling to reduce function call overhead
+#define HANDLE_ERROR(msg) do { \
+    __builtin_trap(); \
+} while(0)
 
-struct boot_params {
+// Minimal boot parameters structure
+typedef struct __attribute__((packed)) {
     uint32_t magic;
-    uint32_t size;
-    uint32_t load_addr;
-    uint32_t entry_point;
-};
+    uintptr_t entry_point;
+    uintptr_t load_addr;
+} BootParams;
 
-void exit_with_error(const char *message) {
-    perror(message);
-    exit(EXIT_FAILURE);
-}
+// Statically allocated minimal context
+static struct {
+    int kernel_fd;
+    void* kernel_base;
+    size_t kernel_size;
+    BootParams boot_params;
+} g_context;
 
-char *map_file(const char *filename, size_t *size, int *fd) {
-    *fd = open(filename, O_RDONLY);
-    if (*fd < 0) {
-        exit_with_error("Error opening file");
-    }
-
+// Optimized file mapping with minimal error checking
+static inline void* map_kernel_file(const char* path) {
     struct stat st;
-    if (fstat(*fd, &st) < 0) {
-        close(*fd);
-        exit_with_error("Error getting file size");
-    }
+    if (stat(path, &st) < 0) HANDLE_ERROR("stat failed");
 
-    *size = st.st_size;
-    char *buffer = mmap(NULL, *size, PROT_READ, MAP_PRIVATE, *fd, 0);
-    if (buffer == MAP_FAILED) {
-        close(*fd);
-        exit_with_error("Error mapping file");
-    }
+    g_context.kernel_fd = open(path, O_RDONLY);
+    if (g_context.kernel_fd < 0) HANDLE_ERROR("open failed");
 
-    return buffer;
+    g_context.kernel_size = st.st_size;
+    g_context.kernel_base = mmap(NULL, g_context.kernel_size, 
+                                 PROT_READ, MAP_PRIVATE, 
+                                 g_context.kernel_fd, 0);
+    
+    if (g_context.kernel_base == MAP_FAILED) HANDLE_ERROR("mmap failed");
+
+    return g_context.kernel_base;
 }
 
-void unmap_file(char *buffer, size_t size) {
-    if (munmap(buffer, size) < 0) {
-        exit_with_error("Error unmapping memory");
-    }
-}
+// Highly optimized ELF segment loader
+static inline void load_kernel_segments(Elf32_Ehdr* ehdr) {
+    Elf32_Phdr* phdr = (Elf32_Phdr*)((char*)ehdr + ehdr->e_phoff);
+    
+    for (uint16_t i = 0; i < ehdr->e_phnum; ++i) {
+        if (phdr[i].p_type != PT_LOAD) continue;
 
-void load_kernel_segments(const Elf32_Ehdr *ehdr, int fd, const char *buffer, size_t file_size) {
-    size_t page_size = sysconf(_SC_PAGESIZE);
-    Elf32_Phdr *phdr = (Elf32_Phdr *)(buffer + ehdr->e_phoff);
-    for (int i = 0; i < ehdr->e_phnum; ++i) {
-        if (phdr[i].p_type == PT_LOAD) {
-            void *va = (void *)phdr[i].p_vaddr;
-            size_t filesz = phdr[i].p_filesz;
-            size_t memsz = phdr[i].p_memsz;
+        // Minimal protection mapping
+        int prot = ((phdr[i].p_flags & PF_R) ? PROT_READ : 0) |
+                   ((phdr[i].p_flags & PF_W) ? PROT_WRITE : 0) |
+                   ((phdr[i].p_flags & PF_X) ? PROT_EXEC : 0);
 
-            if (phdr[i].p_offset + filesz > file_size) {
-                exit_with_error("Segment extends beyond file size");
-            }
+        void* dest = (void*)phdr[i].p_vaddr;
+        size_t memsz = phdr[i].p_memsz;
+        size_t filesz = phdr[i].p_filesz;
 
-            int prot = 0;
-            if (phdr[i].p_flags & PF_R) prot |= PROT_READ;
-            if (phdr[i].p_flags & PF_W) prot |= PROT_WRITE;
-            if (phdr[i].p_flags & PF_X) prot |= PROT_EXEC;
+        // Zero-initialize full memory segment
+        if (mmap(dest, memsz, prot, 
+                 MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == MAP_FAILED) {
+            HANDLE_ERROR("segment mapping failed");
+        }
 
-            size_t start_page = (size_t)va / page_size * page_size;
-            size_t end_page = ((size_t)va + memsz + page_size - 1) / page_size * page_size;
-            size_t map_size = end_page - start_page;
-
-            if (mmap((void *)start_page, map_size, prot, MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) == MAP_FAILED) {
-                exit_with_error("Error mapping segment pages");
-            }
-
-            if (filesz > 0) {
-                if (lseek(fd, phdr[i].p_offset, SEEK_SET) == -1) {
-                    exit_with_error("Error seeking file");
-                }
-                if (read(fd, va, filesz) != filesz) {
-                    exit_with_error("Error reading file");
-                }
-            }
+        // Direct memory copy for initialized data
+        if (filesz > 0) {
+            __builtin_memcpy(dest, 
+                             (char*)ehdr + phdr[i].p_offset, 
+                             filesz);
         }
     }
 }
 
-void start_kernel(const Elf32_Ehdr *ehdr, const char *buffer) {
-    struct boot_params params = {
+// Minimal kernel startup routine
+__attribute__((noinline, section(".startup")))
+void start_kernel(Elf32_Ehdr* ehdr) {
+    // Prepare minimal boot parameters
+    g_context.boot_params = (BootParams) {
         .magic = 0x1BADB002,
-        .size = sizeof(params),
-        .load_addr = (uint32_t)buffer,
-        .entry_point = ehdr->e_entry
+        .entry_point = ehdr->e_entry,
+        .load_addr = (uintptr_t)g_context.kernel_base
     };
 
-    void (*kernel_entry)(struct boot_params *) = (void (*)(struct boot_params *))ehdr->e_entry;
-    kernel_entry(&params);
+    // Direct jump to kernel entry point
+    void (*kernel_main)(BootParams*) = 
+        (void (*)(BootParams*))ehdr->e_entry;
+    
+    kernel_main(&g_context.boot_params);
 }
 
-void setup_memory() {
-    void *stack = malloc(STACK_SIZE);
-    void *heap = malloc(HEAP_SIZE);
+// Minimalist main function
+int main(int argc, char* argv[]) {
+    if (argc != 2) __builtin_trap();
 
-    if (!stack || !heap) {
-        fprintf(stderr, "Memory allocation failed\n");
-        exit(EXIT_FAILURE);
-    }
-}
+    void* kernel_image = map_kernel_file(argv[1]);
+    Elf32_Ehdr* ehdr = (Elf32_Ehdr*)kernel_image;
 
-void load_kernel(const char *filename) {
-    int fd;
-    size_t file_size;
-    char *buffer = map_file(filename, &file_size, &fd);
+    // Validate ELF header with minimal checks
+    if (*(uint32_t*)ehdr->e_ident != *(uint32_t*)ELFMAG) __builtin_trap();
 
-    Elf32_Ehdr *ehdr = (Elf32_Ehdr *)buffer;
-    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
-        unmap_file(buffer, file_size);
-        close(fd);
-        fprintf(stderr, "Invalid ELF header\n");
-        exit(EXIT_FAILURE);
-    }
+    load_kernel_segments(ehdr);
+    start_kernel(ehdr);
 
-    load_kernel_segments(ehdr, fd, buffer, file_size);
-    start_kernel(ehdr, buffer);
-    unmap_file(buffer, file_size);
-    close(fd);
-}
-
-int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <kernel_file>\n", argv[0]);
-        exit(EXIT_FAILURE);
-    }
-
-    setup_memory();
-    load_kernel(argv[1]);
-
+    // Unreachable, but kept for compliance
     return 0;
 }
