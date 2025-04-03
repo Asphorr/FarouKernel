@@ -1,100 +1,130 @@
-#include <stddef.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <signal.h>
-#include <time.h>
+#include "syscalls.h"
+#include <stdint.h>
+#include <inttypes.h>
 
-#define MAX_FILENAME_LENGTH 256
-#define MAX_PATH_LENGTH 4096
+#define KERNEL_LOG(fn, msg) \
+    __asm__ volatile("movq %0, %%rdi; movq %1, %%rsi; int $0x80" :: "r"(fn), "r"(msg) : "rdi", "rsi")
 
-typedef struct _file_t {
-    int fd;
-    char filename[MAX_FILENAME_LENGTH];
-    unsigned long inode;
-    off_t offset;
-    size_t length;
-    time_t mtime;
-    bool deleted;
-} file_t;
+#define SYSCALL_INLINE __attribute__((always_inline, flatten)) static inline
+#define LIKELY(x)      __builtin_expect(!!(x), 1)
+#define UNLIKELY(x)    __builtin_expect(!!(x), 0)
 
-typedef enum _mode_t {
-    O_RDONLY = 0x0000,   /* Open for reading only */
-    O_WRONLY = 0x0001,   /* Open for writing only */
-    O_RDWR = 0x0002,     /* Open for reading and writing */
-    O_APPEND = 0x0008,   /* If set, append to the end of the file */
-    O_CREAT = 0x0200,    /* If set, create the file if it does not exist */
-    O_EXCL = 0x0800      /* If set, fail if the file already exists */
-} mode_t;
-
-typedef struct _process_t {
-    pid_t pid;           /* Process ID */
-    uid_t uid;           /* User ID */
-    gid_t gid;           /* Group ID */
-    char name[32];       /* Name of the process */
-    char cwd[MAX_PATH_LENGTH]; /* Current working directory */
-    char **argv;         /* Command line arguments */
-    char **envp;         /* Environment variables */
-    file_t files[32];    /* File descriptors */
-    int num_files;       /* Number of file descriptors */
-    int max_files;       /* Maximum number of file descriptors */
-    sigset_t signal_mask;/* Signal mask for the process */
-    volatile int state; /* State of the process (running, waiting, etc.) */
-    volatile int wakeup; /* Wake-up reason for the process */
-    volatile int error; /* Error code for the process */
-    volatile int retval; /* Return value for the process */
-} process_t;
-
-typedef struct _syscall_args_t {
+typedef struct {
     union {
-        int arg1;
-        int arg2;
-        int arg3;
-        int arg4;
-        int arg5;
-        int arg6;
-        int arg7;
-        int arg8;
-        int arg9;
-        int arg10;
+        struct { uint64_t a, b, c, d; };
+        uint64_t args[4];
     };
 } syscall_args_t;
 
-typedef struct _syscall_result_t {
-    int result;          /* Result of the system call */
-    int errnum;          /* Errno associated with the result */
-} syscall_result_t;
+typedef uint64_t (*syscall_handler_t)(const syscall_args_t*);
+static const syscall_handler_t syscall_table[SYS_MAX] __attribute__((aligned(64))) = {
+    [SYS_WRITE] = sys_write,
+    [SYS_READ]  = sys_read,
+    [SYS_OPEN]  = sys_open,
+    [SYS_CLOSE] = sys_close,
+    [SYS_LSEEK] = sys_lseek,
+    [SYS_FSTAT] = sys_fstat,
+    [SYS_EXIT]  = sys_exit
+};
 
-typedef struct _syscall_entry_t {
-    int number;          /* System call number */
-    const char *name;    /* Name of the system call */
-    void (*handler)(struct _syscall_args_t *args, struct _syscall_result_t *res); /* Handler function for the system call */
-} syscall_entry_t;
+uint64_t syscall_entry(uint64_t num, const syscall_args_t *args) {
+    if (UNLIKELY(num >= SYS_MAX || !syscall_table[num])) {
+        KERNEL_LOG(__func__, "Invalid syscall");
+        return -ENOSYS;
+    }
+    return syscall_table[num](args);
+}
 
-extern syscall_entry_t syscall_table[];
+SYSCALL_INLINE uint64_t sys_write(const syscall_args_t *a) {
+    int fd; const char *buf; size_t count;
+    fd = a->a; buf = (const char*)a->b; count = a->c;
 
-/* Function prototypes */
-void init_syscalls(void);
-void handle_system_call(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_exit(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_read(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_write(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_open(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_close(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_creat(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_link(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_unlink(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_execve(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_chdir(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_fork(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_wait(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_pipe(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_dup(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_dup2(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_getpid(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_brk(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_sleep(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_signal(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_kill(struct _syscall_args_t *args, struct _syscall_result_t *res);
+    ssize_t ret;
+    __asm__ volatile (
+        "mov %1, %%rax\n"
+        "syscall\n"
+        : "=a"(ret)
+        : "i"(SYS_write), "D"(fd), "S"(buf), "d"(count)
+        : "rcx", "r11", "memory"
+    );
+    return LIKELY(ret >= 0) ? ret : -errno;
+}
+
+SYSCALL_INLINE uint64_t sys_read(const syscall_args_t *a) {
+    int fd; char *buf; size_t count;
+    fd = a->a; buf = (char*)a->b; count = a->c;
+
+    register ssize_t ret __asm__("rax");
+    __asm__ volatile (
+        "syscall\n"
+        : "=a"(ret)
+        : "a"(SYS_read), "D"(fd), "S"(buf), "d"(count)
+        : "rcx", "r11", "memory"
+    );
+    return LIKELY(ret >= 0) ? ret : -errno;
+}
+
+SYSCALL_INLINE uint64_t sys_open(const syscall_args_t *a) {
+    const char *path = (const char*)a->a;
+    int flags = a->b; mode_t mode = a->c;
+
+    register int ret __asm__("rax");
+    __asm__ volatile (
+        "syscall\n"
+        : "=a"(ret)
+        : "a"(SYS_open), "D"(path), "S"(flags), "d"(mode)
+        : "rcx", "r11", "memory"
+    );
+    return LIKELY(ret >= 0) ? ret : -errno;
+}
+
+SYSCALL_INLINE uint64_t sys_close(const syscall_args_t *a) {
+    int fd = a->a;
+    
+    register int ret __asm__("rax");
+    __asm__ volatile (
+        "syscall\n"
+        : "=a"(ret)
+        : "a"(SYS_close), "D"(fd)
+        : "rcx", "r11"
+    );
+    return LIKELY(ret == 0) ? 0 : -errno;
+}
+
+SYSCALL_INLINE uint64_t sys_lseek(const syscall_args_t *a) {
+    int fd = a->a; off_t off = a->b; int whence = a->c;
+
+    register off_t ret __asm__("rax");
+    __asm__ volatile (
+        "syscall\n"
+        : "=a"(ret)
+        : "a"(SYS_lseek), "D"(fd), "S"(off), "d"(whence)
+        : "rcx", "r11"
+    );
+    return LIKELY(ret != (off_t)-1) ? ret : -errno;
+}
+
+SYSCALL_INLINE uint64_t sys_fstat(const syscall_args_t *a) {
+    int fd = a->a; struct stat *st = (struct stat*)a->b;
+
+    register int ret __asm__("rax");
+    __asm__ volatile (
+        "syscall\n"
+        : "=a"(ret)
+        : "a"(SYS_fstat), "D"(fd), "S"(st)
+        : "rcx", "r11", "memory"
+    );
+    return LIKELY(ret == 0) ? 0 : -errno;
+}
+
+SYSCALL_INLINE uint64_t sys_exit(const syscall_args_t *a) {
+    int status = a->a;
+    __asm__ volatile (
+        "mov %0, %%edi\n"
+        "mov %1, %%rax\n"
+        "syscall\n"
+        :: "i"(SYS_exit), "i"(status)
+        : "memory"
+    );
+    __builtin_unreachable();
+}
