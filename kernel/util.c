@@ -1,87 +1,113 @@
 #include <iostream>
 #include <utility>
-#include <vector>
+#include <cstddef>
+#include <type_traits>
 
-// A helper class to check if a type is an array
-template <typename T>
-struct IsArrayHelper {
-    static constexpr bool value = false;
-};
-
-template <typename T, size_t N>
-struct IsArrayHelper<T[N]> {
-    static constexpr bool value = true;
-};
-
-template <typename T>
-inline constexpr bool IsArray = IsArrayHelper<T>::value;
-
-// A unique pointer wrapper that supports both single objects and arrays
-template <typename T>
+// =======================
+// UniquePtr для одиночного T
+// =======================
+template<typename T>
 class UniquePtr {
+    static_assert(!std::is_array_v<T>, "Use UniquePtr<T[]> for arrays");
 public:
-    // Constructor from a raw pointer
-    explicit UniquePtr(T* ptr) noexcept : _ptr(ptr), _isArray(IsArray<T>) {}
+    explicit UniquePtr(T* ptr = nullptr) noexcept : ptr_(ptr) {}
+    ~UniquePtr() noexcept { delete ptr_; }
 
-    // Move constructor
-    UniquePtr(UniquePtr&& other) noexcept : _ptr(other._ptr), _isArray(other._isArray) {
-        other._ptr = nullptr;
-    }
+    UniquePtr(const UniquePtr&) = delete;
+    UniquePtr& operator=(const UniquePtr&) = delete;
 
-    // Destructor
-    ~UniquePtr() noexcept {
-        if (_ptr) {
-            if (_isArray) {
-                delete[] _ptr;
-            } else {
-                delete _ptr;
-            }
+    UniquePtr(UniquePtr&& o) noexcept : ptr_(o.ptr_) { o.ptr_ = nullptr; }
+    UniquePtr& operator=(UniquePtr&& o) noexcept {
+        if (this != &o) {
+            reset(o.release());
         }
-    }
-
-    // Copy assignment operator
-    UniquePtr& operator=(UniquePtr other) noexcept {
-        swap(_ptr, other._ptr);
-        swap(_isArray, other._isArray);
         return *this;
     }
 
-    // Dereference operators
-    T& operator*() noexcept { return *_ptr; }
-    const T& operator*() const noexcept { return *_ptr; }
+    T* get() const noexcept { return ptr_; }
+    T* release() noexcept { T* tmp = ptr_; ptr_ = nullptr; return tmp; }
+    void reset(T* ptr = nullptr) noexcept {
+        if (ptr_ != ptr) {
+            delete ptr_;
+            ptr_ = ptr;
+        }
+    }
+    void swap(UniquePtr& o) noexcept { std::swap(ptr_, o.ptr_); }
+
+    T& operator*()  const noexcept { return *ptr_; }
+    T* operator->() const noexcept { return ptr_; }
+    explicit operator bool() const noexcept { return ptr_ != nullptr; }
 
 private:
-    T* _ptr;
-    bool _isArray;
+    T* ptr_;
 };
 
-// Function to create a new instance of a given type
-template <typename T>
-[[nodiscard]] auto CreateInstance(size_t n) -> UniquePtr<T> {
-    if (!IsArray<T>) {
-        return UniquePtr<T>(new T());
+// =======================
+// Специализация UniquePtr для T[]
+// =======================
+template<typename T>
+class UniquePtr<T[]> {
+public:
+    explicit UniquePtr(T* ptr = nullptr) noexcept : ptr_(ptr) {}
+    ~UniquePtr() noexcept { delete[] ptr_; }
+
+    UniquePtr(const UniquePtr&) = delete;
+    UniquePtr& operator=(const UniquePtr&) = delete;
+
+    UniquePtr(UniquePtr&& o) noexcept : ptr_(o.ptr_) { o.ptr_ = nullptr; }
+    UniquePtr& operator=(UniquePtr&& o) noexcept {
+        if (this != &o) {
+            reset(o.release());
+        }
+        return *this;
+    }
+
+    T* get() const noexcept { return ptr_; }
+    T* release() noexcept { T* tmp = ptr_; ptr_ = nullptr; return tmp; }
+    void reset(T* ptr = nullptr) noexcept {
+        if (ptr_ != ptr) {
+            delete[] ptr_;
+            ptr_ = ptr;
+        }
+    }
+    void swap(UniquePtr& o) noexcept { std::swap(ptr_, o.ptr_); }
+
+    T& operator[](std::size_t i) const noexcept { return ptr_[i]; }
+    explicit operator bool() const noexcept { return ptr_ != nullptr; }
+
+private:
+    T* ptr_;
+};
+
+// =======================
+// MakeUnique-обёртка
+// =======================
+template<typename T, typename... Args>
+auto MakeUnique(Args&&... args) {
+    if constexpr (std::is_array_v<T>) {
+        static_assert(std::extent_v<T> == 0, "Use MakeUnique<T[]>(n) for arrays");
+        using U = std::remove_extent_t<T>;
+        return UniquePtr<U[]>(new U[std::forward<Args>(args)...]);
     } else {
-        return UniquePtr<T>(new T[n]);
+        return UniquePtr<T>(new T(std::forward<Args>(args)...));
     }
 }
 
+// =======================
+// Демонстрация
+// =======================
 int main() {
-    // Create two instances of different types
-    auto u1 = CreateInstance<int>();
-    auto u2 = CreateInstance<double>(7);
+    // 1) Одиночный объект
+    auto u1 = MakeUnique<int>( );
+    *u1 = 42;
+    std::cout << "*u1 = " << *u1 << "\n\n";
 
-    // Print out the values in each array
-    for (int i = 0; i < 5; ++i) {
-        std::cout << "u1[" << i << "]: " << u1[i] << '\n';
-    }
-    for (int j = 0; j < 7; ++j) {
-        std::cout << "u2[" << j << "]: " << u2[j] << '\n';
-    }
+    // 2) Массив из 7 элементов
+    auto u2 = MakeUnique<int[]>(7);
+    for (size_t i = 0; i < 7; ++i)
+        u2[i] = static_cast<int>(i * i);
+    for (size_t i = 0; i < 7; ++i)
+        std::cout << "u2[" << i << "] = " << u2[i] << "\n";
 
-    // Check if the pointers are arrays
-    static_assert(IsArray<decltype(*u1)> == false);
-    static_assert(IsArray<decltype(*u2)> == true);
-
-    // Delete the instances when they go out of scope
     return 0;
 }
