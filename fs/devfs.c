@@ -1,279 +1,370 @@
-#include "devfs.h"
-
 #include <linux/init.h>
+#include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/pagemap.h> /* For basic filesystem functions */
-#include <linux/time.h>
+#include <linux/fs.h>       /* VFS */
+#include <linux/pagemap.h>  /* generic_file_llseek */
+#include <linux/slab.h>     /* kzalloc, kfree */
+#include <linux/time.h>     /* current_time */
+#include <linux/uaccess.h>  /* copy_to_user, copy_from_user */
+#include <linux/mutex.h>    /* Mutex for locking */
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Mikhail");
-MODULE_DESCRIPTION("An improved sample device file system");
+MODULE_AUTHOR("Mikhail / Improved");
+MODULE_DESCRIPTION("An improved, simple, in-memory device file system");
 
-static struct devfs_params devfs_params;
+#define DEVFS_SUPER_MAGIC 0x20240500
+#define DEVFS_DEFAULT_BUF_SIZE PAGE_SIZE
+#define DEVFS_FILENAME "buffer"
 
-/* Function to fill the superblock */
-int devfs_fill_super(struct super_block *sb, void *data, int silent);
+// Forward declarations
+static int devfs_fill_super(struct super_block *sb, void *data, int silent);
+static struct dentry *devfs_mount(struct file_system_type *fs_type, int flags,
+                           const char *dev_name, void *data);
+static void devfs_evict_inode(struct inode *inode);
 
-/* Declare the file system type */
+// Read/Write for the in-memory file
+static ssize_t devfs_read(struct file *filp, char __user *buf, size_t count, loff_t *ppos);
+static ssize_t devfs_write(struct file *filp, const char __user *buf, size_t count, loff_t *ppos);
+
+/*
+ * Internal representation for our in-memory file's data.
+ * Stored in inode->i_private
+ */
+struct devfs_inode_info {
+	char *buffer;
+	size_t buffer_size;
+	struct mutex lock; /* Protects buffer and i_size */
+};
+
+
+//=============================================================================
+// FILE SYSTEM TYPE
+//=============================================================================
+
 static struct file_system_type devfs_type = {
-    .owner = THIS_MODULE,
-    .name = "devfs",
-    .mount = devfs_mount,
-    .kill_sb = kill_litter_super,
-    .fs_flags = FS_USERNS_MOUNT,
+	.owner		= THIS_MODULE,
+	.name		= "devfs_improved",
+	.mount		= devfs_mount,
+	.kill_sb	= kill_litter_super, // Good for in-memory FS
+	.fs_flags	= FS_USERNS_MOUNT,
 };
 
-/* File operations */
-const struct file_operations devfs_file_operations = {
-    .owner = THIS_MODULE,
-    .llseek = generic_file_llseek,
-    .read = devfs_read,
-    .write = devfs_write,
-    .open = devfs_open,
-    .release = devfs_release,
-    .unlocked_ioctl = devfs_ioctl,
-    .compat_ioctl = devfs_compat_ioctl,
-    .mmap = devfs_mmap,
+//=============================================================================
+// OPERATIONS
+//=============================================================================
+
+/* File operations for our regular (buffer) file */
+static const struct file_operations devfs_file_operations = {
+	.owner		= THIS_MODULE,
+	.llseek		= generic_file_llseek, // Use the VFS generic
+	.read		= devfs_read,
+	.write		= devfs_write,
+	/* .open, .release, .ioctl, .mmap could be added if needed */
 };
 
-/* Inode operations */
-const struct inode_operations devfs_inode_operations = {
-    /* Implement required inode operations */
+/*
+ * Inode operations for the ROOT DIRECTORY.
+ * We use simple_lookup because we manually populate the directory
+ * in fill_super using d_instantiate.
+ * If we wanted to support dynamic mkdir/create, we would
+ * need to provide our own implementations here.
+ */
+static const struct inode_operations devfs_dir_inode_operations = {
+	.lookup = simple_lookup,
 };
 
 /* Super block operations */
-const struct super_operations devfs_super_operations = {
-    .statfs     = simple_statfs,
-    .drop_inode = generic_delete_inode,
+static const struct super_operations devfs_super_operations = {
+	.statfs		= simple_statfs,
+	// .drop_inode	= generic_delete_inode, // Calls clear_inode
+	.evict_inode    = devfs_evict_inode,    // Needed to free i_private
 };
 
-/**
- * devfs_mount - Mount the devfs filesystem
- * @fs_type: File system type
- * @flags: Mount flags
- * @dev_name: Device name
- * @data: Mount data
- *
- * This function mounts the devfs filesystem.
- *
- * Return: Pointer to the root dentry on success, ERR_PTR on failure
- */
-struct dentry *devfs_mount(struct file_system_type *fs_type, int flags,
-                           const char *dev_name, void *data)
-{
-    return mount_nodev(fs_type, flags, data, devfs_fill_super);
-}
+
+//=============================================================================
+// IMPLEMENTATIONS
+//=============================================================================
 
 /**
- * devfs_parse_param - Parse mount parameters
- * @options: Mount options string
- * @params: Pointer to devfs_params structure
+ * devfs_evict_inode - Called when inode refcount reaches zero.
+ * @inode: The inode being evicted.
  *
- * This function parses the mount options for devfs.
- *
- * Return: 0 on success, negative error code on failure
+ * Frees the private data buffer associated with our file inode.
  */
-int devfs_parse_param(const char *options, struct devfs_params *params)
+static void devfs_evict_inode(struct inode *inode)
 {
-    /* For now, we can just return 0 as there are no parameters */
-    return 0;
+	struct devfs_inode_info *info = inode->i_private;
+
+	pr_debug("devfs: Evicting inode %lu\n", inode->i_ino);
+	truncate_inode_pages_final(&inode->i_data);
+	clear_inode(inode); // Standard VFS cleanup
+	if (info) {
+		// Free the buffer we allocated
+		kfree(info->buffer);
+		kfree(info);
+	}
 }
 
-/**
- * devfs_read - Read from a devfs file
- * @filp: File pointer
- * @buf: User buffer
- * @count: Number of bytes to read
- * @ppos: File position
- *
- * This function reads data from a devfs file.
- *
- * Return: Number of bytes read on success, negative error code on failure
- */
-ssize_t devfs_read(struct file *filp, char __user *buf, size_t count, loff_t *ppos)
-{
-    /* Implement read operation */
-    return -ENOSYS;
-}
 
 /**
- * devfs_write - Write to a devfs file
- * @filp: File pointer
- * @buf: User buffer
- * @count: Number of bytes to write
- * @ppos: File position
- *
- * This function writes data to a devfs file.
- *
- * Return: Number of bytes written on success, negative error code on failure
- */
-ssize_t devfs_write(struct file *filp, const char __user *buf, size_t count, loff_t *ppos)
-{
-    /* Implement write operation */
-    return -ENOSYS;
-}
-
-/**
- * devfs_open - Open a devfs file
- * @inode: Inode of the file
- * @filp: File pointer
- *
- * This function is called when a devfs file is opened.
- *
- * Return: 0 on success, negative error code on failure
- */
-int devfs_open(struct inode *inode, struct file *filp)
-{
-    /* Implement open operation */
-    return 0;
-}
-
-/**
- * devfs_release - Release a devfs file
- * @inode: Inode of the file
- * @filp: File pointer
- *
- * This function is called when a devfs file is closed.
- *
- * Return: 0 on success, negative error code on failure
- */
-int devfs_release(struct inode *inode, struct file *filp)
-{
-    /* Implement release operation */
-    return 0;
-}
-
-/**
- * devfs_ioctl - IOCTL operation for devfs
- * @filp: File pointer
- * @cmd: IOCTL command
- * @arg: IOCTL argument
- *
- * This function handles IOCTL operations for devfs.
- *
- * Return: 0 on success, negative error code on failure
- */
-long devfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
-{
-    /* Implement ioctl operation */
-    return -ENOTTY;
-}
-
-/**
- * devfs_compat_ioctl - Compatibility IOCTL operation for devfs
- * @filp: File pointer
- * @cmd: IOCTL command
- * @arg: IOCTL argument
- *
- * This function handles compatibility IOCTL operations for devfs.
- *
- * Return: 0 on success, negative error code on failure
- */
-long devfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
-{
-    /* Implement compat_ioctl operation */
-    return -ENOTTY;
-}
-
-/**
- * devfs_mmap - Memory map operation for devfs
- * @filp: File pointer
- * @vma: Virtual memory area
- *
- * This function handles memory mapping for devfs.
- *
- * Return: 0 on success, negative error code on failure
- */
-int devfs_mmap(struct file *filp, struct vm_area_struct *vma)
-{
-    /* Implement mmap operation */
-    return -ENOSYS;
-}
-
-/**
- * devfs_fill_super - Fill superblock information
+ * devfs_get_inode - Create a new inode
  * @sb: Superblock
- * @data: Mount data
- * @silent: Silent flag
+ * @mode: Inode mode (permissions and type)
+ * @dev: device number (if S_ISBLK or S_ISCHR)
  *
- * This function fills the superblock with devfs-specific information.
- *
- * Return: 0 on success, negative error code on failure
+ * Allocates a new inode and sets some default parameters.
+ * Returns: Pointer to inode, or NULL on failure.
+ */
+static struct inode *devfs_get_inode(struct super_block *sb,
+						const struct inode *dir,
+						umode_t mode,
+						dev_t dev)
+{
+	struct inode *inode = new_inode(sb);
+
+	if (inode) {
+		inode->i_mode = mode;
+		inode->i_uid.val = 0;
+		inode->i_gid.val = 0;
+		//inode_init_owner(inode, dir, mode); // Use this for current user
+		inode->i_blocks = 0;
+		inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
+		switch (mode & S_IFMT) {
+		case S_IFREG:
+			pr_debug("devfs: Creating REG file inode\n");
+			inode->i_op = &devfs_dir_inode_operations; //FIXME: Should be file_inode_ops if we had them
+			inode->i_fop = &devfs_file_operations;
+			break;
+		case S_IFDIR:
+			pr_debug("devfs: Creating DIR file inode\n");
+			inode->i_op = &devfs_dir_inode_operations;
+			inode->i_fop = &simple_dir_operations; // Allows readdir etc.
+			inc_nlink(inode); /* Dirs get '.' link */
+			break;
+        		 default:
+			pr_err("devfs: Unsupported inode type\n");
+			// Should free inode here, but new_inode/iput handles this
+			return ERR_PTR(-EINVAL);
+		}
+	}
+	return inode;
+}
+
+
+/**
+ * devfs_read - Read from the in-memory file
+ */
+static ssize_t devfs_read(struct file *filp, char __user *buf, size_t count, loff_t *ppos)
+{
+	struct inode *inode = file_inode(filp);
+	struct devfs_inode_info *info = inode->i_private;
+	ssize_t retval = 0;
+	size_t file_size;
+
+	if (!info || !info->buffer)
+		return -EIO;
+
+	mutex_lock(&info->lock);
+
+	file_size = i_size_read(inode);
+
+	if (*ppos >= file_size) {
+		pr_debug("devfs: Read EOF (pos=%lld, size=%zu)\n", *ppos, file_size);
+		goto out_unlock; /* EOF */
+	}
+
+	// Adjust count if it reads past the end
+	if (count > file_size - *ppos)
+		count = file_size - *ppos;
+
+	pr_debug("devfs: Reading %zu bytes at pos %lld (size=%zu)\n",
+		 count, *ppos, file_size);
+
+	if (copy_to_user(buf, info->buffer + *ppos, count)) {
+		retval = -EFAULT;
+		goto out_unlock;
+	}
+
+	*ppos += count;
+	retval = count;
+
+out_unlock:
+	mutex_unlock(&info->lock);
+	return retval;
+}
+
+/**
+ * devfs_write - Write to the in-memory file
+ */
+static ssize_t devfs_write(struct file *filp, const char __user *buf, size_t count, loff_t *ppos)
+{
+	struct inode *inode = file_inode(filp);
+	struct devfs_inode_info *info = inode->i_private;
+	ssize_t retval = -ENOMEM; // Assume out of memory
+
+	if (!info || !info->buffer)
+		return -EIO;
+
+	mutex_lock(&info->lock);
+
+	// Check if write exceeds our allocated buffer size
+	if (*ppos >= info->buffer_size) {
+		pr_warn("devfs: Write beyond allocated buffer (pos=%lld, max=%zu)\n",
+			*ppos, info->buffer_size);
+		retval = -ENOSPC; // No space left on device
+		goto out_unlock;
+	}
+
+       // Prevent writing past the end of our fixed-size buffer
+	if (count > info->buffer_size - *ppos) {
+		count = info->buffer_size - *ppos;
+         }
+
+	pr_debug("devfs: Writing %zu bytes at pos %lld (max_size=%zu)\n",
+		 count, *ppos, info->buffer_size);
+
+	if (copy_from_user(info->buffer + *ppos, buf, count)) {
+		retval = -EFAULT;
+		goto out_unlock;
+	}
+
+	*ppos += count;
+	retval = count;
+
+	// Update file size if we wrote past the previous end
+	if (*ppos > i_size_read(inode)) {
+		i_size_write(inode, *ppos);
+		pr_debug("devfs: New file size %lld\n", *ppos);
+	}
+        // Update timestamp
+	inode->i_mtime = inode->i_ctime = current_time(inode);
+
+out_unlock:
+	mutex_unlock(&info->lock);
+	return retval;
+}
+
+
+/**
+ * devfs_fill_super - Fill superblock information, create root and files.
  */
 int devfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-    struct inode *inode;
-    struct dentry *root;
+	struct inode *root_inode = NULL;
+	struct inode *file_inode = NULL;
+	struct dentry *root_dentry = NULL;
+	struct dentry *file_dentry = NULL;
+	struct devfs_inode_info *info = NULL;
+	int err = -ENOMEM;
 
-    /* Set superblock parameters */
-    sb->s_magic = DEVFS_SUPER_MAGIC;
-    sb->s_op = &devfs_super_operations;
-    sb->s_time_gran = 1;
+	sb->s_maxbytes		= MAX_LFS_FILESIZE;
+	sb->s_blocksize		= PAGE_SIZE;
+	sb->s_blocksize_bits	= PAGE_SHIFT;
+	sb->s_magic		= DEVFS_SUPER_MAGIC;
+	sb->s_op		= &devfs_super_operations;
+	sb->s_time_gran		= 1; // nanosecond timestamp granularity
 
-    /* Allocate inode for root directory */
-    inode = new_inode(sb);
-    if (!inode)
-        return -ENOMEM;
+	// 1. Create Root Inode
+	root_inode = devfs_get_inode(sb, NULL, S_IFDIR | 0755, 0);
+	if (IS_ERR(root_inode)) {
+	     err = PTR_ERR(root_inode);
+	     goto failed;
+	}
+	root_inode->i_ino = 1; // Typically 1, but not required
+	pr_info("devfs: Root inode created\n");
 
-    inode->i_ino = 1; /* Inode number 1 for root */
-    inode->i_sb = sb;
-    inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
-    inode->i_mode = S_IFDIR | 0755;
-    inode->i_op = &simple_dir_inode_operations;
-    inode->i_fop = &simple_dir_operations;
+	// 2. Create Root Dentry
+	root_dentry = d_make_root(root_inode);
+	if (!root_dentry)
+		goto failed_iput_root;
+	sb->s_root = root_dentry;
 
-    /* Create root dentry */
-    root = d_make_root(inode);
-    if (!root) {
-        iput(inode);
-        return -ENOMEM;
-    }
 
-    sb->s_root = root;
-    return 0;
+       // 3. Create the In-Memory File Inode
+       file_inode = devfs_get_inode(sb, root_inode, S_IFREG | 0666, 0);
+       if (IS_ERR(file_inode)) {
+	     err = PTR_ERR(file_inode);
+             goto failed; // d_make_root will iput(root_inode) on failure
+       }
+       file_inode->i_ino = 2;
+
+       // 3a. Allocate private data (the buffer) for the file
+       info = kzalloc(sizeof(struct devfs_inode_info), GFP_KERNEL);
+       if (!info)
+	       goto failed_iput_file;
+
+       info->buffer = kzalloc(DEVFS_DEFAULT_BUF_SIZE, GFP_KERNEL);
+        if (!info->buffer) {
+		kfree(info);
+		goto failed_iput_file;
+	}
+	info->buffer_size = DEVFS_DEFAULT_BUF_SIZE;
+	mutex_init(&info->lock);
+	file_inode->i_private = info;
+	i_size_write(file_inode, 0); // Initially empty
+
+	// 4. Create the file Dentry and link it
+	file_dentry = d_alloc_name(root_dentry, DEVFS_FILENAME);
+	if (!file_dentry)
+		goto failed_iput_file;
+
+	d_add(file_dentry, file_inode);
+	// d_instantiate(file_dentry, file_inode); // Use d_add
+
+	pr_info("devfs: Filesystem mounted, file '%s' created.\n", DEVFS_FILENAME);
+	return 0; // SUCCESS!
+
+failed_iput_file:
+	iput(file_inode); // Will call evict_inode to free private data
+	goto failed;
+failed_iput_root:
+       iput(root_inode);
+failed:
+	pr_err("devfs: Mount failed with error %d\n", err);
+	return err;
 }
 
 /**
+ * devfs_mount - Mount the devfs filesystem
+ */
+struct dentry *devfs_mount(struct file_system_type *fs_type, int flags,
+			   const char *dev_name, void *data)
+{
+	pr_info("devfs: Mounting...\n");
+	// mount_nodev is appropriate for filesystems that don't
+	// sit on a block device.
+	return mount_nodev(fs_type, flags, data, devfs_fill_super);
+}
+
+
+//=============================================================================
+// MODULE INIT / EXIT
+//=============================================================================
+
+/**
  * devfs_init - Initialize the devfs module
- *
- * This function initializes the devfs module and registers the filesystem.
- *
- * Return: 0 on success, negative error code on failure
  */
 static int __init devfs_init(void)
 {
-    int ret;
+	int ret;
 
-    ret = devfs_parse_param(NULL, &devfs_params);
-    if (ret) {
-        pr_err("devfs: Failed to parse parameters\n");
-        return ret;
-    }
+	ret = register_filesystem(&devfs_type);
+	if (ret) {
+		pr_err("devfs: Failed to register filesystem\n");
+		return ret;
+	}
 
-    ret = register_filesystem(&devfs_type);
-    if (ret) {
-        pr_err("devfs: Failed to register filesystem\n");
-        return ret;
-    }
-
-    pr_info("devfs: Module loaded\n");
-    return 0;
+	pr_info("devfs: Module loaded\n");
+	return 0;
 }
 
 /**
  * devfs_exit - Cleanup and exit the devfs module
- *
- * This function unregisters the filesystem and performs any necessary cleanup.
  */
 static void __exit devfs_exit(void)
 {
-    int ret;
-
-    ret = unregister_filesystem(&devfs_type);
-    if (ret)
-        pr_err("devfs: Failed to unregister filesystem\n");
-
-    pr_info("devfs: Module unloaded\n");
+	unregister_filesystem(&devfs_type);
+	pr_info("devfs: Module unloaded\n");
 }
 
 module_init(devfs_init);
