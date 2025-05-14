@@ -1,100 +1,199 @@
-#include <stddef.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <signal.h>
-#include <time.h>
+#include <stdint.h>
+#include <stddef.h> // For size_t, ssize_t
+// #include <sys/types.h> // For mode_t, off_t (in a real kernel, these come from internal headers)
+// #include <sys/stat.h>  // For struct stat  (in a real kernel, these come from internal headers)
 
-#define MAX_FILENAME_LENGTH 256
-#define MAX_PATH_LENGTH 4096
+//==================================================================
+// ЗАГЛУШКИ / ПРЕДПОЛОЖЕНИЯ:
+// Предполагается, что syscalls.h определяет:
+// 1. Константы SYS_WRITE, SYS_READ, ..., SYS_MAX
+// 2. Значение ENOSYS
+// 3. Прототипы для sys_write, sys_read и т.д. (хотя они static, это не обязательно)
+// 4. Типы mode_t, off_t, struct stat (если не подключать системные)
+#include "syscalls.h" 
 
-typedef struct _file_t {
-    int fd;
-    char filename[MAX_FILENAME_LENGTH];
-    unsigned long inode;
-    off_t offset;
-    size_t length;
-    time_t mtime;
-    bool deleted;
-} file_t;
+// Заглушка для kernel logging - РЕАЛИЗАЦИЯ ЗАВИСИТ ОТ ЯДРА!
+// Убираем ассемблерную вставку для int 0x80, т.к. она несовместима
+// с инструкцией 'syscall' для 64-bit и, скорее всего, неверна.
+static void kernel_log_impl(const char* func, const char* msg) {
+   // ЗДЕСЬ ДОЛЖНА БЫТЬ РЕАЛИЗАЦИЯ ЛОГИРОВАНИЯ ВАШЕГО ЯДРА
+   // Например, вызов printk()
+   (void)func; // Подавить unused warning
+   (void)msg;  // Подавить unused warning
+}
+#define KERNEL_LOG(fn, msg) kernel_log_impl(fn, msg)
+//==================================================================
 
-typedef enum _mode_t {
-    O_RDONLY = 0x0000,   /* Open for reading only */
-    O_WRONLY = 0x0001,   /* Open for writing only */
-    O_RDWR = 0x0002,     /* Open for reading and writing */
-    O_APPEND = 0x0008,   /* If set, append to the end of the file */
-    O_CREAT = 0x0200,    /* If set, create the file if it does not exist */
-    O_EXCL = 0x0800      /* If set, fail if the file already exists */
-} mode_t;
 
-typedef struct _process_t {
-    pid_t pid;           /* Process ID */
-    uid_t uid;           /* User ID */
-    gid_t gid;           /* Group ID */
-    char name[32];       /* Name of the process */
-    char cwd[MAX_PATH_LENGTH]; /* Current working directory */
-    char **argv;         /* Command line arguments */
-    char **envp;         /* Environment variables */
-    file_t files[32];    /* File descriptors */
-    int num_files;       /* Number of file descriptors */
-    int max_files;       /* Maximum number of file descriptors */
-    sigset_t signal_mask;/* Signal mask for the process */
-    volatile int state; /* State of the process (running, waiting, etc.) */
-    volatile int wakeup; /* Wake-up reason for the process */
-    volatile int error; /* Error code for the process */
-    volatile int retval; /* Return value for the process */
-} process_t;
+#define SYSCALL_INLINE __attribute__((always_inline, flatten)) static inline
+#define LIKELY(x)      __builtin_expect(!!(x), 1)
+#define UNLIKELY(x)    __builtin_expect(!!(x), 0)
 
-typedef struct _syscall_args_t {
+// Для ясности лучше использоватьstdint типы или системные, если доступны
+// typedef long ssize_t; 
+// typedef unsigned long size_t;
+
+typedef struct {
     union {
-        int arg1;
-        int arg2;
-        int arg3;
-        int arg4;
-        int arg5;
-        int arg6;
-        int arg7;
-        int arg8;
-        int arg9;
-        int arg10;
+        // Аргументы согласно ABI (rdi, rsi, rdx, r10, ...)
+        struct { uint64_t arg0, arg1, arg2, arg3, arg4, arg5; }; 
+        uint64_t args[6]; // Расширим до 6 для общности
     };
 } syscall_args_t;
 
-typedef struct _syscall_result_t {
-    int result;          /* Result of the system call */
-    int errnum;          /* Errno associated with the result */
-} syscall_result_t;
+// Объявим прототипы здесь, чтобы таблица была чище
+SYSCALL_INLINE uint64_t sys_write(const syscall_args_t *a);
+SYSCALL_INLINE uint64_t sys_read(const syscall_args_t *a);
+SYSCALL_INLINE uint64_t sys_open(const syscall_args_t *a);
+SYSCALL_INLINE uint64_t sys_close(const syscall_args_t *a);
+SYSCALL_INLINE uint64_t sys_lseek(const syscall_args_t *a);
+SYSCALL_INLINE uint64_t sys_fstat(const syscall_args_t *a);
+SYSCALL_INLINE uint64_t sys_exit(const syscall_args_t *a);
+//---
 
-typedef struct _syscall_entry_t {
-    int number;          /* System call number */
-    const char *name;    /* Name of the system call */
-    void (*handler)(struct _syscall_args_t *args, struct _syscall_result_t *res); /* Handler function for the system call */
-} syscall_entry_t;
+typedef uint64_t (*syscall_handler_t)(const syscall_args_t*);
 
-extern syscall_entry_t syscall_table[];
+// Таблица обработчиков
+static const syscall_handler_t syscall_table[SYS_MAX] __attribute__((aligned(64))) = {
+    [SYS_WRITE] = sys_write,
+    [SYS_READ]  = sys_read,
+    [SYS_OPEN]  = sys_open,
+    [SYS_CLOSE] = sys_close,
+    [SYS_LSEEK] = sys_lseek,
+    [SYS_FSTAT] = sys_fstat,
+    [SYS_EXIT]  = sys_exit
+};
 
-/* Function prototypes */
-void init_syscalls(void);
-void handle_system_call(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_exit(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_read(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_write(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_open(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_close(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_creat(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_link(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_unlink(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_execve(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_chdir(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_fork(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_wait(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_pipe(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_dup(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_dup2(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_getpid(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_brk(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_sleep(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_signal(struct _syscall_args_t *args, struct _syscall_result_t *res);
-void handle_kill(struct _syscall_args_t *args, struct _syscall_result_t *res);
+/**
+ * @brief Точка входа диспетчера системных вызовов.
+ * 
+ * @param num Номер системного вызова (должен быть в rax при входе).
+ * @param args Указатель на структуру с аргументами.
+ * @return uint64_t Результат системного вызова. 
+ *         В случае ошибки, это будет отрицательное число (-errno).
+ *         Вызывающая сторона должна интерпретировать результат.
+ */
+uint64_t syscall_entry(uint64_t num, const syscall_args_t *args) {
+    // Проверка остается такой же, она корректна.
+    if (UNLIKELY(num >= SYS_MAX || !syscall_table[num])) {
+        KERNEL_LOG(__func__, "Invalid or unimplemented syscall");
+        return (uint64_t)-ENOSYS; // Возвращаем -ENOSYS, приведенный к uint64_t
+    }
+     
+    // Вызов обработчика
+    return syscall_table[num](args);
+}
+
+//----------------------------------------------------------------
+// РЕАЛИЗАЦИИ ОБРАБОТЧИКОВ
+//----------------------------------------------------------------
+
+SYSCALL_INLINE uint64_t sys_write(const syscall_args_t *a) {
+    // Используем более строгие и подходящие типы
+    int         fd    = (int)a->arg0;
+    const void* buf   = (const void*)a->arg1;
+    size_t      count = (size_t)a->arg2;
+
+    register int64_t ret __asm__("rax"); // syscall возвращает знаковый тип!
+    
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret) // Выход: rax
+        : "a"(SYS_WRITE), "D"(fd), "S"(buf), "d"(count) // Входы: rax, rdi, rsi, rdx
+        : "rcx", "r11", "memory" // Разрушаемые регистры + память
+    );
+     // ПРАВИЛЬНАЯ ОБРАБОТКА: Просто возвращаем то, что вернул syscall.
+     // Вызывающий код должен проверить, < 0 ли результат.
+    return (uint64_t)ret;
+}
+
+SYSCALL_INLINE uint64_t sys_read(const syscall_args_t *a) {
+     int         fd    = (int)a->arg0;
+     void*       buf   = (void*)a->arg1;
+     size_t      count = (size_t)a->arg2;
+
+    register int64_t ret __asm__("rax");
+    
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_READ), "D"(fd), "S"(buf), "d"(count)
+        : "rcx", "r11", "memory"
+    );
+     return (uint64_t)ret; // Возвращаем как есть
+}
+
+SYSCALL_INLINE uint64_t sys_open(const syscall_args_t *a) {
+    const char *path  = (const char*)a->arg0;
+    int        flags = (int)a->arg1;
+    mode_t     mode  = (mode_t)a->arg2; // mode_t - обычно unsigned
+
+    register int64_t ret __asm__("rax");
+     
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_OPEN), "D"(path), "S"(flags), "d"(mode)
+        : "rcx", "r11", "memory"
+    );
+     return (uint64_t)ret;
+}
+
+SYSCALL_INLINE uint64_t sys_close(const syscall_args_t *a) {
+    int fd = (int)a->arg0;
+    
+    register int64_t ret __asm__("rax");
+     
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_CLOSE), "D"(fd)
+        : "rcx", "r11" // Память не трогается
+    );
+     return (uint64_t)ret;
+}
+
+SYSCALL_INLINE uint64_t sys_lseek(const syscall_args_t *a) {
+    int   fd     = (int)a->arg0; 
+    off_t offset = (off_t)a->arg1; 
+    int   whence = (int)a->arg2;
+
+    register int64_t ret __asm__("rax"); // lseek может вернуть большое значение или -1
+    
+     __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_LSEEK), "D"(fd), "S"(offset), "d"(whence)
+        : "rcx", "r11"
+    );
+     return (uint64_t)ret;
+}
+ 
+ SYSCALL_INLINE uint64_t sys_fstat(const syscall_args_t *a) {
+    int fd = (int)a->arg0;
+    struct stat *st = (struct stat*)a->arg1;
+
+    register int64_t ret __asm__("rax");
+    
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_FSTAT), "D"(fd), "S"(st)
+        : "rcx", "r11", "memory"
+    );
+     return (uint64_t)ret;
+}
+
+// Исправленная версия:
+SYSCALL_INLINE uint64_t sys_exit(const syscall_args_t *a) {
+     int status = (int)a->arg0;
+     
+    __asm__ volatile (
+        "syscall"
+        : /* Нет выходных операндов, т.к. вызов не возвращается */ 
+        : "a"(SYS_EXIT), "D"(status) /* syscall номер в RAX, первый арг. в RDI */
+        : "rcx", "r11" // Технически, они тоже могут быть изменены
+    );
+    __builtin_unreachable(); // Сообщаем компилятору, что сюда управление не вернется.
+     // return 0; // Недостижимо, но может потребоваться, чтобы компилятор не ругался
+}
