@@ -6,6 +6,8 @@
 #include <fstream>
 #include <stdexcept>
 #include <chrono>
+#include <iterator>
+#include <sstream>
 
 class File {
 public:
@@ -43,7 +45,7 @@ public:
 
     std::filesystem::path getPath() const;
     std::uintmax_t getSize() const;
-    std::chrono::system_clock::time_point getLastModifiedTime() const;
+    std::filesystem::file_time_type getLastModifiedTime() const;
 
     static void withFile(const std::string& path, Mode mode, FileCallback callback);
     static bool exists(const std::string& path);
@@ -82,19 +84,26 @@ File::File(File&&) noexcept = default;
 File& File::operator=(File&&) noexcept = default;
 
 bool File::isOpen() const noexcept {
-    return pImpl->stream.is_open();
+    return pImpl && pImpl->stream.is_open();
 }
 
 void File::open(Mode mode) {
     if (isOpen()) close();
 
-    std::ios_base::openmode flags;
+    std::ios_base::openmode flags = std::ios_base::binary;
     switch (mode) {
-        case Mode::Read: flags = std::ios_base::in; break;
-        case Mode::Write: flags = std::ios_base::out | std::ios_base::trunc; break;
-        case Mode::Append: flags = std::ios_base::out | std::ios_base::app; break;
-        case Mode::ReadWrite: flags = std::ios_base::in | std::ios_base::out; break;
-        default: throw Exception("Invalid file mode");
+        case Mode::Read: 
+            flags |= std::ios_base::in; 
+            break;
+        case Mode::Write: 
+            flags |= std::ios_base::out | std::ios_base::trunc; 
+            break;
+        case Mode::Append: 
+            flags |= std::ios_base::out | std::ios_base::app; 
+            break;
+        case Mode::ReadWrite: 
+            flags |= std::ios_base::in | std::ios_base::out; 
+            break;
     }
 
     pImpl->stream.open(pImpl->filePath, flags);
@@ -105,46 +114,88 @@ void File::open(Mode mode) {
 }
 
 void File::close() noexcept {
-    pImpl->stream.close();
+    if (pImpl && pImpl->stream.is_open()) {
+        pImpl->stream.close();
+    }
 }
 
 std::string File::readAll() {
-    if (pImpl->mode == Mode::Write || pImpl->mode == Mode::Append) {
+    if (!pImpl || (pImpl->mode == Mode::Write || pImpl->mode == Mode::Append)) {
         throw Exception("File not opened for reading");
     }
 
+    // Save current position
+    auto currentPos = pImpl->stream.tellg();
+    
+    // Read entire file
     pImpl->stream.seekg(0, std::ios::beg);
-    return std::string(std::istreambuf_iterator<char>(pImpl->stream), std::istreambuf_iterator<char>());
+    std::stringstream buffer;
+    buffer << pImpl->stream.rdbuf();
+    
+    // Restore position
+    pImpl->stream.seekg(currentPos);
+    
+    return buffer.str();
 }
 
 std::vector<std::string> File::readLines() {
+    if (!pImpl || (pImpl->mode == Mode::Write || pImpl->mode == Mode::Append)) {
+        throw Exception("File not opened for reading");
+    }
+
     std::vector<std::string> lines;
     std::string line;
+    
+    // Save current position
+    auto currentPos = pImpl->stream.tellg();
+    pImpl->stream.seekg(0, std::ios::beg);
+    
     while (std::getline(pImpl->stream, line)) {
         lines.push_back(std::move(line));
     }
+    
+    // Clear EOF flag if set
+    pImpl->stream.clear();
+    pImpl->stream.seekg(currentPos);
+    
     return lines;
 }
 
 std::string File::readLine() {
+    if (!pImpl || (pImpl->mode == Mode::Write || pImpl->mode == Mode::Append)) {
+        throw Exception("File not opened for reading");
+    }
+
     std::string line;
     std::getline(pImpl->stream, line);
     return line;
 }
 
 std::vector<char> File::readBytes(size_t count) {
+    if (!pImpl || (pImpl->mode == Mode::Write || pImpl->mode == Mode::Append)) {
+        throw Exception("File not opened for reading");
+    }
+
     std::vector<char> buffer(count);
     pImpl->stream.read(buffer.data(), count);
-    buffer.resize(pImpl->stream.gcount());
+    buffer.resize(static_cast<size_t>(pImpl->stream.gcount()));
     return buffer;
 }
 
 void File::write(const std::string& data) {
+    if (!pImpl || pImpl->mode == Mode::Read) {
+        throw Exception("File not opened for writing");
+    }
+
     pImpl->stream << data;
     if (!pImpl->stream) throw Exception("Write operation failed");
 }
 
 void File::writeLine(const std::string& line) {
+    if (!pImpl || pImpl->mode == Mode::Read) {
+        throw Exception("File not opened for writing");
+    }
+
     pImpl->stream << line << '\n';
     if (!pImpl->stream) throw Exception("Write operation failed");
 }
@@ -156,38 +207,54 @@ void File::writeLines(const std::vector<std::string>& lines) {
 }
 
 void File::writeBytes(const std::vector<char>& bytes) {
-    pImpl->stream.write(bytes.data(), bytes.size());
+    if (!pImpl || pImpl->mode == Mode::Read) {
+        throw Exception("File not opened for writing");
+    }
+
+    pImpl->stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     if (!pImpl->stream) throw Exception("Write operation failed");
 }
 
 void File::seek(std::streamoff offset, SeekOrigin origin) {
+    if (!pImpl) throw Exception("File not initialized");
+
     std::ios_base::seekdir dir;
     switch (origin) {
         case SeekOrigin::Begin: dir = std::ios_base::beg; break;
         case SeekOrigin::Current: dir = std::ios_base::cur; break;
         case SeekOrigin::End: dir = std::ios_base::end; break;
     }
-    pImpl->stream.seekg(offset, dir);
-    pImpl->stream.seekp(offset, dir);
+    
+    if (pImpl->mode == Mode::Read || pImpl->mode == Mode::ReadWrite) {
+        pImpl->stream.seekg(offset, dir);
+    }
+    if (pImpl->mode == Mode::Write || pImpl->mode == Mode::Append || pImpl->mode == Mode::ReadWrite) {
+        pImpl->stream.seekp(offset, dir);
+    }
 }
 
 std::streampos File::tell() const {
+    if (!pImpl) throw Exception("File not initialized");
     return pImpl->stream.tellg();
 }
 
 void File::flush() {
+    if (!pImpl) throw Exception("File not initialized");
     pImpl->stream.flush();
 }
 
 std::filesystem::path File::getPath() const {
+    if (!pImpl) throw Exception("File not initialized");
     return pImpl->filePath;
 }
 
 std::uintmax_t File::getSize() const {
+    if (!pImpl) throw Exception("File not initialized");
     return std::filesystem::file_size(pImpl->filePath);
 }
 
-std::chrono::system_clock::time_point File::getLastModifiedTime() const {
+std::filesystem::file_time_type File::getLastModifiedTime() const {
+    if (!pImpl) throw Exception("File not initialized");
     return std::filesystem::last_write_time(pImpl->filePath);
 }
 
@@ -201,7 +268,9 @@ bool File::exists(const std::string& path) {
 }
 
 void File::copy(const std::string& from, const std::string& to, bool overwrite) {
-    std::filesystem::copy(from, to, overwrite ? std::filesystem::copy_options::overwrite_existing : std::filesystem::copy_options::none);
+    std::filesystem::copy(from, to, 
+        overwrite ? std::filesystem::copy_options::overwrite_existing 
+                  : std::filesystem::copy_options::none);
 }
 
 void File::move(const std::string& from, const std::string& to) {
