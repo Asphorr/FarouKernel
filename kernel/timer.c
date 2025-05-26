@@ -1,204 +1,134 @@
-#include <linux/init.h>
-#include <linux/module.h>
-#include <linux/kernel.h>
-#include <linux/slab.h>
-#include <linux/timekeeping.h>
-#include <linux/timerfd.h>
-#include <linux/workqueue.h>
+#include <chrono>
+#include <iostream>
+#include <string>
+#include <iomanip> // For std::fixed and std::setprecision
+#include <thread> // For std::this_thread::sleep_for
 
-// Define the major number for the timer device node
-#define TIMER_MAJOR 123
+using namespace std::literals;
 
-// Structure representing a single timer instance
-struct timer {
-    // The actual timer object
-    struct timer_list list;
+class ScopedTimer {
+public:
+    explicit ScopedTimer(const std::string& name)
+        : name_(name), start_time_(std::chrono::steady_clock::now()), stopped_(false) {
+        std::cout << "Timer '" << name_ << "' started." << std::endl;
+    }
 
-    // The time at which the timer should fire
-    u64 expires;
+    ~ScopedTimer() {
+        if (!stopped_) {
+            stop();
+        }
+    }
 
-    // A flag indicating whether the timer has been started or stopped
-    bool running;
+    void stop() {
+        if (!stopped_) {
+            auto end_time = std::chrono::steady_clock::now();
+            auto duration = end_time - start_time_;
+            stopped_ = true;
+
+            auto duration_ms = std::chrono::duration<double, std::milli>(duration).count();
+
+            std::cout << "Timer '" << name_ << "' stopped. Duration: "
+                      << std::fixed << std::setprecision(3) << duration_ms << " ms." << std::endl;
+        }
+    }
+
+    // Prevent copying and assignment
+    ScopedTimer(const ScopedTimer&) = delete;
+    ScopedTimer& operator=(const ScopedTimer&) = delete;
+
+private:
+    std::string name_;
+    std::chrono::steady_clock::time_point start_time_;
+    bool stopped_;
 };
 
-// Function prototypes
-static int timer_open(struct inode *inode, struct file *filp);
-static int timer_release(struct inode *inode, struct file *filp);
-static ssize_t timer_read(struct file *filp, char __user *buf, size_t len, loff_t *off);
-static ssize_t timer_write(struct file *filp, const char __user *buf, size_t len, loff_t *off);
-static int timer_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
-static void timer_interrupt(struct timer_list *t);
-static int timer_start(struct timer *tmr);
-static int timer_stop(struct timer *tmr);
+class ManualTimer {
+public:
+    explicit ManualTimer() : running_(false) {}
 
-// Module initialization function
-static int __init timer_init(void)
-{
-    int ret;
-
-    // Register the character device driver
-    ret = register_chrdev(TIMER_MAJOR, "timer", &timer_fops);
-    if (ret) {
-        pr_err("Failed to register character device driver\n");
-        return ret;
+    void start() {
+        if(!running_){
+            start_time_ = std::chrono::steady_clock::now();
+            running_ = true;
+        } else {
+            std::cerr << "Warning: Timer is already running." << std::endl;
+        }
     }
 
-    // Allocate memory for the timer structure
-    struct timer *tmr = kmalloc(sizeof(*tmr), GFP_KERNEL);
-    if (!tmr) {
-        pr_err("Failed to allocate memory for timer structure\n");
-        goto err_kmalloc;
+    void stop() {
+        if (running_) {
+            end_time_ = std::chrono::steady_clock::now();
+            running_ = false;
+        } else {
+            std::cerr << "Warning: Timer was not running when stop() was called." << std::endl;
+        }
     }
 
-    // Initialize the timer structure
-    tmr->running = false;
-    tmr->expires = 0;
-    INIT_LIST_HEAD(&tmr->list);
+    template <typename DurationType = std::chrono::milliseconds>
+    typename DurationType::rep elapsed() const {
+        if (running_) {
+            return std::chrono::duration_cast<DurationType>(std::chrono::steady_clock::now() - start_time_).count();
+        } else if (start_time_ != std::chrono::steady_clock::time_point{} && end_time_ != std::chrono::steady_clock::time_point{}) {
+            return std::chrono::duration_cast<DurationType>(end_time_ - start_time_).count();
+        }
+        return 0;
+    }
 
-    // Add the timer to the system's work queue
-    add_timer(&tmr->list);
+    double elapsed_seconds() const {
+        return elapsed<std::chrono::duration<double>>();
+    }
 
-    return 0;
+    double elapsed_milliseconds() const {
+        return elapsed<std::chrono::duration<double, std::milli>>();
+    }
 
-err_kmalloc:
-    unregister_chrdev(TIMER_MAJOR, "timer");
-    return ret;
-}
+    double elapsed_microseconds() const {
+        return elapsed<std::chrono::duration<double, std::micro>>();
+    }
 
-// Module exit function
-static void __exit timer_exit(void)
-{
-    // Remove the timer from the system's work queue
-    remove_timer(&tmr->list);
+    double elapsed_nanoseconds() const {
+        return elapsed<std::chrono::duration<double, std::nano>>();
+    }
 
-    // Free the memory allocated for the timer structure
-    kfree(tmr);
+    bool is_running() const {
+        return running_;
+    }
 
-    // Unregister the character device driver
-    unregister_chrdev(TIMER_MAJOR, "timer");
-}
-
-// File operations structure for the timer device node
-static const struct file_operations timer_fops = {
-    .owner   = THIS_MODULE,
-    .open    = timer_open,
-    .release = timer_release,
-    .read    = timer_read,
-    .write   = timer_write,
-    .llseek = noop_llseek,
-    .unlocked_ioctl = timer_ioctl,
+private:
+    std::chrono::steady_clock::time_point start_time_{}, end_time_{};
+    bool running_;
 };
 
-// Open method for the timer device node
-static int timer_open(struct inode *inode, struct file *filp)
-{
-    // Get the pointer to the timer structure associated with the device node
-    struct timer *tmr = container_of(inode->i_cdev, struct timer, cdev);
+int main() {
+    std::cout << "Scoped Timer Example:\n";
+    {
+        ScopedTimer scoped("File Processing");
+        std::cout << "Simulating file processing...\n";
+        std::this_thread::sleep_for(210ms);
+    } // Timer stops and prints here
 
-    // Check if the timer is already open
-    if (tmr->running) {
-        return -EBUSY;
-    }
+    std::cout << "\nManual Timer Example:\n";
+    ManualTimer manual;
+    manual.start();
+    std::cout << "Manual timer started. Simulating task 1...\n";
+    std::this_thread::sleep_for(80ms);
+    std::cout << "Elapsed so far: " << std::fixed << std::setprecision(1) << manual.elapsed_milliseconds() << " ms\n";
+    std::cout << "Simulating task 2...\n";
+    std::this_thread::sleep_for(130ms);
+    manual.stop();
+    std::cout << "Manual timer stopped.\n";
 
-    // Start the timer
-    return timer_start(tmr);
-}
+    std::cout << "Total time measured by manual timer: "
+              << std::fixed << std::setprecision(3)
+              << manual.elapsed_milliseconds() << " ms ("
+              << manual.elapsed_microseconds() << " us, "
+              << manual.elapsed_seconds() << " s)" << std::endl;
 
-// Release method for the timer device node
-static int timer_release(struct inode *inode, struct file *filp)
-{
-    // Get the pointer to the timer structure associated with the device node
-    struct timer *tmr = container_of(inode->i_cdev, struct timer, cdev);
-
-    // Stop the timer
-    return timer_stop(tmr);
-}
-
-// Read method for the timer device node
-static ssize_t timer_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
-{
-    // Get the pointer to the timer structure associated with the device node
-    struct timer *tmr = filp->private_data;
-
-    // Return the current value of the timer
-    return copy_to_user(buf, &tmr->expires, sizeof(tmr->expires));
-}
-
-// Write method for the timer device node
-static ssize_t timer_write(struct file *filp, const char __user *buf, size_t len, loff_t *off)
-{
-    // Get the pointer to the timer structure associated with the device node
-    struct timer *tmr = filp->private_data;
-
-    // Set the new value of the timer
-    return copy_from_user(&tmr->expires, buf, sizeof(tmr->expires));
-}
-
-// Ioctl method for the timer device node
-static int timer_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
-{
-    // Get the pointer to the timer structure associated with the device node
-    struct timer *tmr = filp->private_data;
-
-    // Handle the ioctl command
-    switch (cmd) {
-    case TIMER_START:
-        return timer_start(tmr);
-    case TIMER_STOP:
-        return timer_stop(tmr);
-    default:
-        return -EINVAL;
-    }
-}
-
-// Interrupt handler for the timer interrupt
-static irqreturn_t timer_interrupt(int irq, void *dev_id)
-{
-    // Get the pointer to the timer structure associated with the device node
-    struct timer *tmr = dev_id;
-
-    // Update the timer's expiration time
-    tmr->expires += msecs_to_jiffies(1);
-
-    // Wake up any processes waiting on the timer
-    wake_up_interruptible(&tmr->wait);
-
-    return IRQ_HANDLED;
-}
-
-// Start the timer
-static int timer_start(struct timer *tmr)
-{
-    // Make sure the timer isn't already running
-    if (tmr->running) {
-        return -EBUSY;
-    }
-
-    // Enable the timer interrupt
-    enable_irq(tmr->irq);
-
-    // Mark the timer as running
-    tmr->running = true;
+    manual.start();
+    std::cout << "\nRestarting manual timer for another operation...\n";
+    std::this_thread::sleep_for(55ms);
+    manual.stop();
+    std::cout << "Second operation time: " << manual.elapsed_nanoseconds() << " ns" << std::endl;
 
     return 0;
 }
-
-// Stop the timer
-static int timer_stop(struct timer *tmr)
-{
-    // Disable the timer interrupt
-    disable_irq(tmr->irq);
-
-    // Mark the timer as stopped
-    tmr->running = false;
-
-    return 0;
-}
-
-module_init(timer_init);
-module_exit(timer_exit);
-
-MODULE_DESCRIPTION("Simple timer example");
-MODULE_AUTHOR("Mikhail");
-MODULE_VERSION("1.0");
-MODULE_LICENSE("GPL");
